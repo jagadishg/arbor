@@ -249,7 +249,7 @@ func readSecret(options Options) (string, error) {
 	if err != nil && !errors.Is(err, io.EOF) {
 		return "", err
 	}
-	return strings.TrimSpace(value), nil
+	return strings.TrimRight(value, "\r\n"), nil
 }
 
 func initCommand(options Options) *cobra.Command {

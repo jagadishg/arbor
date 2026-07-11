@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jagadishg/arbor/schemas/environment.schema.json",
+  "title": "Arbor environment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "kind", "name"],
+  "properties": {
+    "version": { "const": 1 },
+    "kind": { "const": "environment" },
+    "name": { "type": "string", "minLength": 1 },
+    "variables": { "type": "object", "additionalProperties": { "type": "string" } },
+    "secrets": { "type": "object", "additionalProperties": { "type": "string", "pattern": "^(env|keychain)://" } }
+  }
+}

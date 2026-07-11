@@ -1,0 +1,13 @@
+version: 1
+kind: request
+id: github.user-by-id
+name: Get GitHub user by ID
+method: GET
+url: "{{base_url}}/user/{{account_id}}"
+
+headers:
+  Accept: application/vnd.github+json
+
+assert:
+  - status == 200
+  - body.login == "{{username}}"

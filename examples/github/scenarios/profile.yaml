@@ -1,0 +1,8 @@
+version: 1
+kind: scenario
+id: github.profile
+name: GitHub profile lookup
+
+steps:
+  - request: github.user
+  - request: github.user-by-id

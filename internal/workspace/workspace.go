@@ -196,7 +196,7 @@ func Validate(ws *model.Workspace) []error {
 		}
 		seenScenarios[ref] = scenario.Path
 		for index, step := range scenario.Steps {
-			if _, ok := seenRequests[step.Request]; !ok {
+			if _, ok := ws.RequestByRef(step.Request); !ok {
 				errs = append(errs, ValidationError{Path: scenario.Path, Message: fmt.Sprintf("step %d references unknown request %q", index+1, step.Request)})
 			}
 		}

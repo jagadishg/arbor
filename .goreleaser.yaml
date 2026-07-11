@@ -1,0 +1,49 @@
+version: 2
+
+project_name: arbor
+
+builds:
+  - id: arbor
+    main: ./cmd/arbor
+    binary: arbor
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/jagadishg/arbor/internal/buildinfo.Version={{.Version}}
+        -X github.com/jagadishg/arbor/internal/buildinfo.Commit={{.Commit}}
+        -X github.com/jagadishg/arbor/internal/buildinfo.Date={{.Date}}
+
+archives:
+  - ids:
+      - arbor
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+
+release:
+  prerelease: auto
