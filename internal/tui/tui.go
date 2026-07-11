@@ -20,6 +20,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/jagadishg/arbor/internal/app"
 	"github.com/jagadishg/arbor/internal/buildinfo"
+	"github.com/jagadishg/arbor/internal/config"
 	"github.com/jagadishg/arbor/internal/model"
 	"gopkg.in/yaml.v3"
 )
@@ -31,10 +32,11 @@ const (
 	collectionsSection
 	scenariosSection
 	environmentsSection
+	workspacesSection
 )
 
 func (s section) String() string {
-	return []string{"requests", "collections", "scenarios", "environments"}[s]
+	return []string{"requests", "collections", "scenarios", "environments", "workspaces"}[s]
 }
 
 type inputMode int
@@ -72,6 +74,14 @@ type reloadDoneMsg struct {
 	err     error
 }
 type editorDoneMsg struct{ err error }
+type workspaceSwitchedMsg struct {
+	app        *app.App
+	dir        string
+	aliases    map[string]string
+	hotkeys    map[string]hotkey
+	workspaces []config.Entry
+	err        error
+}
 
 type Model struct {
 	ctx         context.Context
@@ -102,6 +112,7 @@ type Model struct {
 	message        string
 	aliases        map[string]string
 	hotkeys        map[string]hotkey
+	workspaces     []config.Entry
 }
 
 type suggestion struct {
@@ -130,7 +141,11 @@ func Run(ctx context.Context, directory, environment string) error {
 func NewModel(ctx context.Context, directory, environment string, loaded *app.App) *Model {
 	aliases, _ := loadAliases(loaded.Workspace.Root)
 	hotkeys, _ := loadHotkeys(loaded.Workspace.Root)
-	return &Model{ctx: ctx, dir: directory, app: loaded, environment: environment, aliases: aliases, hotkeys: hotkeys, width: 100, height: 30}
+	var workspaces []config.Entry
+	if cfg, err := config.Load(); err == nil {
+		workspaces = cfg.Workspaces
+	}
+	return &Model{ctx: ctx, dir: directory, app: loaded, environment: environment, aliases: aliases, hotkeys: hotkeys, workspaces: workspaces, width: 100, height: 30}
 }
 
 func (m *Model) Init() tea.Cmd { return nil }
@@ -169,6 +184,18 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.message = "Editor failed: " + msg.err.Error()
 		} else {
 			return m, m.reloadCmd()
+		}
+	case workspaceSwitchedMsg:
+		if msg.err != nil {
+			m.message = "Switch failed: " + msg.err.Error()
+		} else {
+			m.app, m.dir = msg.app, msg.dir
+			m.aliases, m.hotkeys, m.workspaces = msg.aliases, msg.hotkeys, msg.workspaces
+			m.environment = m.app.Workspace.DefaultEnv
+			m.section, m.scope, m.filter, m.selected = requestsSection, "", "", 0
+			m.history, m.forward = nil, nil
+			m.overlay, m.overlayOffset, m.requestResult, m.scenarioReport = noOverlay, 0, nil, nil
+			m.message = "Switched to " + m.app.Workspace.Name
 		}
 	case tea.KeyPressMsg:
 		return m.handleKey(msg.Keystroke())
@@ -211,9 +238,12 @@ func (m *Model) handleKey(key string) (tea.Model, tea.Cmd) {
 	case "ctrl+u", "ctrl+b", "pageup":
 		m.move(-max(1, m.tableHeight()/2))
 	case "enter":
-		if m.section == collectionsSection {
+		switch m.section {
+		case collectionsSection:
 			m.drillIntoCollection()
-		} else {
+		case workspacesSection:
+			return m, m.switchToSelectedWorkspace()
+		default:
 			m.overlay, m.overlayOffset = describeOverlay, 0
 		}
 	case "d":
@@ -365,6 +395,14 @@ func (m *Model) executeCommand(command string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	verb := strings.ToLower(fields[0])
+	if (verb == "ws" || verb == "workspace" || verb == "workspaces") && len(fields) == 2 && !strings.HasPrefix(fields[1], "/") {
+		if entry, ok := m.findWorkspace(fields[1]); ok {
+			m.message = "Switching to " + entry.Name + "…"
+			return m, m.switchWorkspace(entry.Path)
+		}
+		m.message = "Workspace not found: " + fields[1]
+		return m, nil
+	}
 	if target, ok := m.aliases[verb]; ok {
 		filter := ""
 		if len(fields) > 1 && strings.HasPrefix(fields[1], "/") {
@@ -385,7 +423,7 @@ func (m *Model) executeCommand(command string) (tea.Model, tea.Cmd) {
 	case "use", "context", "ctx":
 		if len(fields) == 1 && (verb == "context" || verb == "ctx") {
 			m.navigate(environmentsSection, "", "")
-			m.message = "Select an environment and press r to set context"
+			m.message = "Select an environment and press r to make it active"
 			return m, nil
 		}
 		if len(fields) != 2 {
@@ -395,7 +433,7 @@ func (m *Model) executeCommand(command string) (tea.Model, tea.Cmd) {
 		if _, ok := m.app.Workspace.EnvironmentByName(fields[1]); !ok {
 			m.message = "Environment not found: " + fields[1]
 		} else {
-			m.environment, m.message = fields[1], "Context set to "+fields[1]
+			m.environment, m.message = fields[1], "Environment set to "+fields[1]
 		}
 	case "run":
 		if len(fields) != 2 {
@@ -416,6 +454,9 @@ func (m *Model) executeCommand(command string) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) navigate(next section, filter, scope string) {
+	if next == workspacesSection {
+		m.refreshWorkspaces()
+	}
 	if m.section != next || m.filter != filter || m.scope != scope {
 		m.history = append(m.history, viewLocation{m.section, m.filter, m.scope, m.selected})
 		m.forward = nil
@@ -456,6 +497,8 @@ func sectionFor(target string) section {
 		return scenariosSection
 	case "environments":
 		return environmentsSection
+	case "workspaces":
+		return workspacesSection
 	default:
 		return requestsSection
 	}
@@ -470,6 +513,59 @@ func (m *Model) drillIntoCollection() {
 		m.navigate(requestsSection, "", collection.Name)
 		m.message = "Viewing collection " + collection.Name
 	}
+}
+
+func (m *Model) switchToSelectedWorkspace() tea.Cmd {
+	items := m.items()
+	if len(items) == 0 {
+		return nil
+	}
+	if entry, ok := items[m.selected].value.(config.Entry); ok {
+		if entry.Path == m.app.Workspace.Root {
+			m.message = "Already in " + entry.Name
+			return nil
+		}
+		m.message = "Switching to " + entry.Name + "…"
+		return m.switchWorkspace(entry.Path)
+	}
+	return nil
+}
+
+// switchWorkspace loads a different workspace, refreshes its interaction files,
+// and records it in the central registry as most-recently-used.
+func (m *Model) switchWorkspace(path string) tea.Cmd {
+	return func() tea.Msg {
+		loaded, err := app.Load(path)
+		if err != nil {
+			return workspaceSwitchedMsg{err: err}
+		}
+		aliases, _ := loadAliases(loaded.Workspace.Root)
+		hotkeys, _ := loadHotkeys(loaded.Workspace.Root)
+		var entries []config.Entry
+		if cfg, cfgErr := config.Load(); cfgErr == nil {
+			cfg.Register(loaded.Workspace.Root, loaded.Workspace.Name)
+			cfg.Touch(loaded.Workspace.Root)
+			_ = cfg.Save()
+			entries = cfg.Workspaces
+		}
+		return workspaceSwitchedMsg{app: loaded, dir: loaded.Workspace.Root, aliases: aliases, hotkeys: hotkeys, workspaces: entries}
+	}
+}
+
+func (m *Model) refreshWorkspaces() {
+	if cfg, err := config.Load(); err == nil {
+		m.workspaces = cfg.Workspaces
+	}
+}
+
+func (m *Model) findWorkspace(name string) (config.Entry, bool) {
+	m.refreshWorkspaces()
+	for _, entry := range m.workspaces {
+		if entry.Name == name {
+			return entry, true
+		}
+	}
+	return config.Entry{}, false
 }
 
 func (m *Model) move(delta int) {
@@ -492,19 +588,35 @@ func (m *Model) runSelected() tea.Cmd {
 	case model.Scenario:
 		return m.runScenario(value.Ref())
 	case model.Environment:
-		m.environment, m.message = value.Name, "Context set to "+value.Name
+		m.environment, m.message = value.Name, "Environment set to "+value.Name
 	}
 	return nil
 }
 
 func (m *Model) runRequest(ref string) tea.Cmd {
+	if !m.requireEnvironment() {
+		return nil
+	}
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.running, m.cancel, m.message = true, cancel, "Running "+ref+"…"
 	loaded, environment := m.app, m.environment
 	return func() tea.Msg { return requestDoneMsg(loaded.RunRequest(ctx, ref, environment, nil)) }
 }
 
+// requireEnvironment blocks a run when the workspace defines environments but
+// none is active, so a run never fails obscurely on undefined {{variables}}.
+func (m *Model) requireEnvironment() bool {
+	if m.environment == "" && len(m.app.Workspace.Environments) > 0 {
+		m.message = "No environment selected — press :use <name> or open :env and pick one with r"
+		return false
+	}
+	return true
+}
+
 func (m *Model) runScenario(ref string) tea.Cmd {
+	if !m.requireEnvironment() {
+		return nil
+	}
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.running, m.cancel, m.message = true, cancel, "Running "+ref+"…"
 	loaded, environment := m.app, m.environment
@@ -566,6 +678,8 @@ func (m *Model) selectedPath() string {
 		return value.Path
 	case model.Environment:
 		return value.Path
+	case config.Entry:
+		return filepath.Join(value.Path, "arbor.yaml")
 	}
 	return ""
 }
@@ -625,6 +739,10 @@ func (m *Model) items() []item {
 		for _, environment := range environments {
 			values = append(values, item{environment.Name, environment})
 		}
+	case workspacesSection:
+		for _, entry := range m.workspaces {
+			values = append(values, item{entry.Name, entry})
+		}
 	}
 	if m.filter == "" {
 		return values
@@ -648,6 +766,8 @@ func (m *Model) itemSearchText(item item) string {
 		return value.Ref() + " " + value.Name
 	case model.Environment:
 		return value.Name
+	case config.Entry:
+		return value.Name + " " + value.Path
 	}
 	return item.label
 }
@@ -687,7 +807,7 @@ func (m *Model) suggestions() []suggestion {
 		}
 		for _, environment := range m.app.Workspace.Environments {
 			if strings.HasPrefix(strings.ToLower(environment.Name), prefix) {
-				values = append(values, suggestion{verb + " " + environment.Name, "switch context"})
+				values = append(values, suggestion{verb + " " + environment.Name, "switch environment"})
 			}
 		}
 	} else {
@@ -696,7 +816,7 @@ func (m *Model) suggestions() []suggestion {
 				values = append(values, suggestion{alias, target + " view"})
 			}
 		}
-		for _, command := range []suggestion{{"requests", "browse requests"}, {"collections", "browse collections"}, {"scenarios", "browse scenarios"}, {"environments", "browse environments"}, {"aliases", "show resource aliases"}, {"help", "show keyboard shortcuts"}, {"reload", "reload workspace files"}, {"use", "switch environment"}, {"ctx", "switch environment"}, {"run", "run a request or scenario"}, {"quit", "quit Arbor"}} {
+		for _, command := range []suggestion{{"requests", "browse requests"}, {"collections", "browse collections"}, {"scenarios", "browse scenarios"}, {"environments", "browse environments"}, {"workspaces", "switch workspace"}, {"aliases", "show resource aliases"}, {"help", "show keyboard shortcuts"}, {"reload", "reload workspace files"}, {"use", "switch environment"}, {"ctx", "switch environment"}, {"run", "run a request or scenario"}, {"quit", "quit Arbor"}} {
 			if strings.HasPrefix(command.value, input) {
 				values = append(values, command)
 			}
@@ -790,13 +910,13 @@ func (m *Model) renderPrompt(width int) string {
 
 func (m *Model) renderHeader(width int) string {
 	if width < 78 {
-		return lipgloss.NewStyle().Background(panel).Width(width).Render(" ARBOR  workspace: " + truncate(m.app.Workspace.Name, max(10, width-30)) + "  context: " + firstOr(m.environment, "none"))
+		return lipgloss.NewStyle().Background(panel).Width(width).Render(" ARBOR  workspace: " + truncate(m.app.Workspace.Name, max(10, width-30)) + "  env: " + firstOr(m.environment, "none"))
 	}
 	leftWidth := max(34, width-34)
 	rows := []string{
 		"ARBOR Workspace: " + m.app.Workspace.Name,
 		"Root:      " + m.app.Workspace.Root,
-		"Context:   " + firstOr(m.environment, "none"),
+		"Environment: " + firstOr(m.environment, "none"),
 		fmt.Sprintf("Resources: %d requests · %d scenarios · %d environments", len(m.app.Workspace.Requests), len(m.app.Workspace.Scenarios), len(m.app.Workspace.Environments)),
 		"Arbor Rev: " + buildinfo.Version,
 	}
@@ -870,6 +990,9 @@ func (m *Model) tableHeader(width int) string {
 	case scenariosSection:
 		nameWidth := max(18, width-24)
 		return style.Render(fmt.Sprintf("  %-*s %-8s %s", nameWidth, "NAME", "STEPS", "ON FAILURE"))
+	case workspacesSection:
+		nameWidth := min(28, max(16, width/3))
+		return style.Render(fmt.Sprintf("  %-*s %s", nameWidth, "NAME", "PATH"))
 	default:
 		nameWidth := max(18, width-30)
 		return style.Render(fmt.Sprintf("  %-*s %-10s %-8s %s", nameWidth, "NAME", "VARIABLES", "SECRETS", "ACTIVE"))
@@ -908,6 +1031,14 @@ func (m *Model) tableRow(index int, item item, width int) string {
 		}
 		nameWidth := max(18, width-30)
 		return style.Render(fmt.Sprintf("%s%-*s %-10d %-8d %s", prefix, nameWidth, truncate(value.Name, nameWidth), len(value.Variables), len(value.Secrets), active))
+	case config.Entry:
+		nameWidth := min(28, max(16, width/3))
+		marker := ""
+		if value.Path == m.app.Workspace.Root {
+			marker = lipgloss.NewStyle().Foreground(green).Render(" ●")
+		}
+		pathWidth := max(10, width-nameWidth-6)
+		return style.Render(fmt.Sprintf("%s%-*s %s%s", prefix, nameWidth, truncate(value.Name, nameWidth), truncate(value.Path, pathWidth), marker))
 	}
 	return ""
 }
@@ -1053,6 +1184,14 @@ func (m *Model) describeSelected() string {
 			}
 		}
 		return strings.Join(lines, "\n")
+	case config.Entry:
+		lines := []string{"Workspace: " + value.Name, "Path: " + value.Path}
+		if value.Path == m.app.Workspace.Root {
+			lines = append(lines, "", "(current workspace — press Enter to reopen)")
+		} else {
+			lines = append(lines, "", "Press Enter to switch to this workspace")
+		}
+		return strings.Join(lines, "\n")
 	}
 	return ""
 }
@@ -1123,7 +1262,7 @@ func (m *Model) responseContent(width int) string {
 
 func (m *Model) helpContent() string {
 	help := strings.Join([]string{
-		"Navigation", "  j/k, ↑/↓     move selection", "  g/G          first/last resource", "  Ctrl-f/b     page down/up", "  Enter        drill into a collection (or describe)", "  Esc, q, h, [ back through view history", "  ], →         forward through view history", "", "Resource actions", "  Enter, d     describe selected resource", "  y            show YAML", "  e            edit in $EDITOR", "  r            run selected request or scenario", "  l            show last response (like logs)", "  Ctrl-w       toggle wide table columns", "", "Views and commands", "  :            command prompt (top, k9s-style)", "  :collections browse collections; :req :sc :env for the rest", "  Ctrl-a       show resource aliases", "  /            filter the current resource view", "  Tab/Ctrl-f/→ accept command suggestion", "  ↑/↓          choose command suggestion", "  Ctrl-u       clear command; Ctrl-w removes its last word", "  Ctrl-r       reload workspace", "  ?            this help", "  Ctrl-c, :q   quit (or cancel a running request)",
+		"Navigation", "  j/k, ↑/↓     move selection", "  g/G          first/last resource", "  Ctrl-f/b     page down/up", "  Enter        drill into a collection / switch workspace (or describe)", "  Esc, q, h, [ back through view history", "  ], →         forward through view history", "", "Resource actions", "  Enter, d     describe selected resource", "  y            show YAML", "  e            edit in $EDITOR", "  r            run selected request or scenario", "  l            show last response (like logs)", "  Ctrl-w       toggle wide table columns", "", "Views and commands", "  :            command prompt (top, k9s-style)", "  :ws          switch workspace (project); :ws <name> jumps directly", "  :use <env>   set the active environment (:ctx is a k9s-style alias)", "  :collections browse collections; :req :sc :env for the rest", "  Ctrl-a       show resource aliases", "  /            filter the current resource view", "  Tab/Ctrl-f/→ accept command suggestion", "  ↑/↓          choose command suggestion", "  Ctrl-u       clear command; Ctrl-w removes its last word", "  Ctrl-r       reload workspace", "  ?            this help", "  Ctrl-c, :q   quit (or cancel a running request)",
 	}, "\n")
 	if len(m.hotkeys) == 0 {
 		return help
@@ -1340,7 +1479,7 @@ func firstOr(value, fallback string) string {
 }
 
 func loadAliases(root string) (map[string]string, error) {
-	aliases := map[string]string{"requests": "requests", "request": "requests", "req": "requests", "r": "requests", "apis": "requests", "collections": "collections", "collection": "collections", "col": "collections", "cols": "collections", "scenarios": "scenarios", "scenario": "scenarios", "sc": "scenarios", "environments": "environments", "environment": "environments", "env": "environments", "envs": "environments", "contexts": "environments"}
+	aliases := map[string]string{"requests": "requests", "request": "requests", "req": "requests", "r": "requests", "apis": "requests", "collections": "collections", "collection": "collections", "col": "collections", "cols": "collections", "scenarios": "scenarios", "scenario": "scenarios", "sc": "scenarios", "environments": "environments", "environment": "environments", "env": "environments", "envs": "environments", "contexts": "environments", "workspaces": "workspaces", "workspace": "workspaces", "ws": "workspaces"}
 	for _, path := range interactionPaths(root, "aliases.yaml") {
 		data, err := os.ReadFile(path)
 		if os.IsNotExist(err) {
@@ -1357,7 +1496,7 @@ func loadAliases(root string) (map[string]string, error) {
 		}
 		for alias, target := range config.Aliases {
 			target = strings.ToLower(strings.TrimSpace(target))
-			if target != "requests" && target != "collections" && target != "scenarios" && target != "environments" {
+			if target != "requests" && target != "collections" && target != "scenarios" && target != "environments" && target != "workspaces" {
 				return nil, fmt.Errorf("alias %q targets unknown view %q", alias, target)
 			}
 			aliases[strings.ToLower(alias)] = target

@@ -24,6 +24,7 @@ TUI ─────────┘            │
 - `internal/variables` implements scope precedence, interpolation, and redaction.
 - `internal/secrets` integrates environment variables and native keychains.
 - `internal/assertions`, `internal/responsevalue`, and `internal/scenario` implement test workflows.
+- `internal/config` manages the central, user-level workspace registry (`$CONFIG/arbor/config.yaml`) and the last-used workspace; it is distinct from the per-workspace files, which remain the source of truth for a workspace's contents.
 - `internal/model` contains the format and result types shared across those packages.
 
 The filesystem is the source of truth. Arbor currently keeps no database and does not mutate request definitions during execution.

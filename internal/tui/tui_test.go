@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/jagadishg/arbor/internal/app"
+	"github.com/jagadishg/arbor/internal/config"
 	"github.com/jagadishg/arbor/internal/model"
 )
 
@@ -225,5 +226,50 @@ func TestYAMLHighlighting(t *testing.T) {
 	}
 	if isNumber("10s") || !isNumber("42") {
 		t.Fatal("isNumber classification wrong")
+	}
+}
+
+func TestWorkspaceSwitchReloadsAndResets(t *testing.T) {
+	t.Setenv("ARBOR_CONFIG", filepath.Join(t.TempDir(), "config.yaml"))
+	writeWS := func(name string) string {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "arbor.yaml"), []byte("version: 1\nname: "+name+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	dirA, dirB := writeWS("alpha"), writeWS("beta")
+	cfg := &config.Config{}
+	cfg.Register(dirA, "alpha")
+	cfg.Register(dirB, "beta")
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	loadedA, err := app.Load(dirA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewModel(context.Background(), dirA, "", &app.App{Workspace: loadedA.Workspace})
+	m.section, m.scope = collectionsSection, "users"
+
+	// :ws beta should switch; run the returned command and apply its message.
+	_, cmd := m.executeCommand("ws beta")
+	if cmd == nil {
+		t.Fatal("no switch command returned")
+	}
+	m.Update(cmd())
+	if m.app.Workspace.Name != "beta" {
+		t.Fatalf("workspace not switched: %q", m.app.Workspace.Name)
+	}
+	if m.section != requestsSection || m.scope != "" {
+		t.Fatalf("state not reset after switch: section=%s scope=%q", m.section, m.scope)
+	}
+}
+
+func TestHeaderUsesEnvironmentLabel(t *testing.T) {
+	m := testModel()
+	_, _ = m.Update(tea.WindowSizeMsg{Width: 110, Height: 32})
+	if view := m.View().Content; !strings.Contains(view, "Environment:") {
+		t.Fatalf("header missing Environment label: %q", view)
 	}
 }

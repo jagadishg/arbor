@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jagadishg/arbor/internal/config"
 )
 
 func TestInitAndValidate(t *testing.T) {
@@ -112,5 +114,45 @@ func TestDescribeUnknownRefErrors(t *testing.T) {
 	command.SetArgs([]string{"describe", "nope.missing"})
 	if err := command.ExecuteContext(context.Background()); err == nil {
 		t.Fatal("expected error for unknown ref")
+	}
+}
+
+func TestRegisterAndWorkspaces(t *testing.T) {
+	t.Setenv("ARBOR_CONFIG", filepath.Join(t.TempDir(), "config.yaml"))
+	root := filepath.Join(t.TempDir(), "demo")
+	var output bytes.Buffer
+	run := func(dir string, args ...string) {
+		t.Helper()
+		output.Reset()
+		command := New(Options{Out: &output, ErrOut: &output, Dir: dir})
+		command.SetArgs(args)
+		if err := command.ExecuteContext(context.Background()); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+	run(root, "init", "--name", "Demo")
+	run(root, "register")
+	run(root, "workspaces")
+	if !strings.Contains(output.String(), "Demo") || !strings.Contains(output.String(), root) {
+		t.Fatalf("workspaces output = %q", output.String())
+	}
+}
+
+func TestResolveDirMapsWorkspaceName(t *testing.T) {
+	t.Setenv("ARBOR_CONFIG", filepath.Join(t.TempDir(), "config.yaml"))
+	root := t.TempDir()
+	cfg, _ := config.Load()
+	cfg.Register(root, "acme")
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if dir, err := resolveDir(Options{Dir: "."}, "acme"); err != nil || dir != root {
+		t.Fatalf("resolveDir(acme) = %q, %v", dir, err)
+	}
+	if _, err := resolveDir(Options{Dir: "."}, "missing"); err == nil {
+		t.Fatal("expected error for unknown workspace")
+	}
+	if dir, _ := resolveDir(Options{Dir: "here"}, ""); dir != "here" {
+		t.Fatalf("resolveDir(\"\") should return cwd, got %q", dir)
 	}
 }

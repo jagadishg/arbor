@@ -196,11 +196,46 @@ arbor scenario auth.smoke --env staging
 
 The command exits non-zero when transport, extraction, or assertion failures occur.
 
+## Workspaces
+
+Each API project is its own workspace (its own `arbor.yaml`, collections, and environments).
+Arbor keeps a central registry — like k9s remembering your clusters — so you can hop between
+projects without caring which directory you launched from. It lives at
+`$XDG_CONFIG_HOME/arbor/config.yaml` (or the OS-standard config dir; override with
+`ARBOR_CONFIG`).
+
+```text
+~/apis/
+├── github-apis/     ← a workspace
+└── twilio-apis/     ← another workspace
+```
+
+The registry fills itself in: opening a workspace with `arbor` auto-registers it and records
+it as most-recently-used. You can also add one explicitly.
+
+```bash
+arbor register ~/apis/twilio-apis   # add a workspace (defaults to cwd)
+arbor workspaces                    # list registered workspaces (* marks last-used)
+arbor unregister twilio-apis        # remove one
+arbor -w github-apis                # open (or run against) a workspace by name, from anywhere
+```
+
+Running `arbor` from a directory that isn't a workspace reopens your last-used one. Inside the
+TUI, `:ws` lists your workspaces and `Enter` switches; `:ws twilio-apis` switches directly.
+
+This gives two levels of context, mirroring k9s: **`:ws`** switches the *project*
+(github ↔ twilio), **`:use`/`:ctx`** switches the *environment* within a project
+(staging ↔ prod). `-w` also works on `run`, `scenario`, `list`, and `describe`, so
+`arbor run github.user -w github-apis` runs from any directory.
+
 ## Command line
 
 ```text
 arbor                              Open the interactive workspace
 arbor init                         Initialize a workspace
+arbor register [dir]               Register a workspace (defaults to cwd)
+arbor workspaces                   List registered workspaces
+arbor unregister <name>            Remove a workspace from the registry
 arbor new request <ref>            Create a request
 arbor new collection <name>        Create a collection
 arbor new environment <name>       Create an environment
@@ -216,6 +251,9 @@ arbor scenario <ref>               Run a scenario
 arbor secret set <name>            Store a keychain secret
 arbor secret delete <name>         Delete a keychain secret
 ```
+
+Add `-w <name>` to target a registered workspace from anywhere (e.g. `arbor run github.user
+-w github-apis`).
 
 `arbor describe <ref> --json` and `arbor list <resource> --json` emit machine-readable
 output — a discovery surface a coding agent can read to work in the workspace without
@@ -237,9 +275,10 @@ Use `--json` with `arbor run` for machine-readable output.
 :scenarios, :scenario, :sc
                           Open scenarios
 :environments, :env       Open environments
-:use staging              Switch environment
-:ctx                      Open environments (k9s-style context view)
-:ctx staging              Switch environment directly
+:workspaces, :ws          Switch workspace (Enter switches to the selected project)
+:ws twilio-apis           Switch workspace directly
+:use staging              Set the active environment
+:ctx staging              Same as :use (k9s-style alias)
 :run users.get            Run a request by reference
 :run auth.smoke           Run a scenario by reference
 :aliases                  Show all resource aliases

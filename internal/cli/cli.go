@@ -15,6 +15,7 @@ import (
 
 	"github.com/jagadishg/arbor/internal/app"
 	"github.com/jagadishg/arbor/internal/buildinfo"
+	"github.com/jagadishg/arbor/internal/config"
 	"github.com/jagadishg/arbor/internal/model"
 	"github.com/jagadishg/arbor/internal/secrets"
 	"github.com/jagadishg/arbor/internal/variables"
@@ -25,11 +26,12 @@ import (
 )
 
 type Options struct {
-	Out    io.Writer
-	ErrOut io.Writer
-	In     io.Reader
-	Dir    string
-	RunTUI func(context.Context, string, string) error
+	Out     io.Writer
+	ErrOut  io.Writer
+	In      io.Reader
+	Dir     string
+	RunTUI  func(context.Context, string, string) error
+	Resolve func() (string, error)
 }
 
 func New(options Options) *cobra.Command {
@@ -46,6 +48,8 @@ func New(options Options) *cobra.Command {
 		options.Dir = "."
 	}
 	var environment string
+	var workspaceName string
+	options.Resolve = func() (string, error) { return resolveDir(options, workspaceName) }
 	root := &cobra.Command{
 		Use: "arbor", Short: "A terminal-native, local-first API workspace",
 		SilenceUsage: true, SilenceErrors: true,
@@ -54,14 +58,139 @@ func New(options Options) *cobra.Command {
 			if options.RunTUI == nil {
 				return cmd.Help()
 			}
-			return options.RunTUI(cmd.Context(), options.Dir, environment)
+			dir, err := resolveTUITarget(options, workspaceName)
+			if err != nil {
+				return err
+			}
+			rememberWorkspace(dir)
+			return options.RunTUI(cmd.Context(), dir, environment)
 		},
 	}
 	root.SetOut(options.Out)
 	root.SetErr(options.ErrOut)
 	root.PersistentFlags().StringVarP(&environment, "env", "e", "", "environment to use")
-	root.AddCommand(initCommand(options), newCommand(options), validateCommand(options), listCommand(options), describeCommand(options, &environment), runCommand(options, &environment), scenarioCommand(options, &environment), secretCommand(options, &environment))
+	root.PersistentFlags().StringVarP(&workspaceName, "workspace", "w", "", "registered workspace to target")
+	root.AddCommand(initCommand(options), newCommand(options), registerCommand(options), workspacesCommand(options), unregisterCommand(options), validateCommand(options), listCommand(options), describeCommand(options, &environment), runCommand(options, &environment), scenarioCommand(options, &environment), secretCommand(options, &environment))
 	return root
+}
+
+// resolveDir maps the --workspace flag to a directory: a registered workspace's
+// path, or the working directory when no name is given.
+func resolveDir(options Options, workspaceName string) (string, error) {
+	if workspaceName == "" {
+		return options.Dir, nil
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return "", err
+	}
+	entry, ok := cfg.Find(workspaceName)
+	if !ok {
+		return "", fmt.Errorf("workspace %q is not registered (see 'arbor workspaces')", workspaceName)
+	}
+	return entry.Path, nil
+}
+
+// resolveTUITarget decides which workspace the TUI opens: an explicit
+// --workspace, else one in/above the working directory, else the last-used one.
+func resolveTUITarget(options Options, workspaceName string) (string, error) {
+	if workspaceName != "" {
+		return resolveDir(options, workspaceName)
+	}
+	if root, err := workspace.FindRoot(options.Dir); err == nil {
+		return root, nil
+	}
+	if cfg, err := config.Load(); err == nil && cfg.LastWorkspace != "" {
+		if _, err := os.Stat(filepath.Join(cfg.LastWorkspace, workspace.ConfigName)); err == nil {
+			return cfg.LastWorkspace, nil
+		}
+	}
+	return "", errors.New("no workspace here — run 'arbor init', 'arbor register <dir>', or open one you've used before")
+}
+
+// rememberWorkspace registers the opened workspace and records it as last-used.
+// It is best-effort: registry problems must not stop the app from opening.
+func rememberWorkspace(root string) {
+	cfg, err := config.Load()
+	if err != nil {
+		return
+	}
+	name := ""
+	if ws, err := workspace.Load(root); err == nil {
+		name = ws.Name
+	}
+	cfg.Register(root, name)
+	cfg.Touch(root)
+	_ = cfg.Save()
+}
+
+func registerCommand(options Options) *cobra.Command {
+	var name string
+	command := &cobra.Command{Use: "register [directory]", Short: "Register a workspace in the central registry", Args: cobra.MaximumNArgs(1), RunE: func(_ *cobra.Command, args []string) error {
+		dir := options.Dir
+		if len(args) == 1 {
+			dir = args[0]
+		}
+		root, err := workspace.FindRoot(dir)
+		if err != nil {
+			return err
+		}
+		if name == "" {
+			if ws, err := workspace.Load(root); err == nil {
+				name = ws.Name
+			}
+		}
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		entry := cfg.Register(root, name)
+		if err := cfg.Save(); err != nil {
+			return err
+		}
+		fmt.Fprintf(options.Out, "Registered workspace %q at %s\n", entry.Name, entry.Path)
+		return nil
+	}}
+	command.Flags().StringVarP(&name, "name", "n", "", "workspace name")
+	return command
+}
+
+func workspacesCommand(options Options) *cobra.Command {
+	return &cobra.Command{Use: "workspaces", Aliases: []string{"ws"}, Short: "List registered workspaces", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		if len(cfg.Workspaces) == 0 {
+			fmt.Fprintln(options.Out, "No workspaces registered. Open one with 'arbor' inside it, or 'arbor register <dir>'.")
+			return nil
+		}
+		for _, entry := range cfg.Workspaces {
+			marker := "  "
+			if entry.Path == cfg.LastWorkspace {
+				marker = "* "
+			}
+			fmt.Fprintf(options.Out, "%s%-20s  %s\n", marker, entry.Name, entry.Path)
+		}
+		return nil
+	}}
+}
+
+func unregisterCommand(options Options) *cobra.Command {
+	return &cobra.Command{Use: "unregister <name>", Short: "Remove a workspace from the registry", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		if !cfg.Remove(args[0]) {
+			return fmt.Errorf("workspace %q is not registered", args[0])
+		}
+		if err := cfg.Save(); err != nil {
+			return err
+		}
+		fmt.Fprintf(options.Out, "Unregistered %s\n", args[0])
+		return nil
+	}}
 }
 
 func newCommand(options Options) *cobra.Command {
@@ -328,7 +457,11 @@ func initialize(directory, name string) error {
 
 func validateCommand(options Options) *cobra.Command {
 	return &cobra.Command{Use: "validate", Short: "Validate the current workspace", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
-		loaded, err := app.Load(options.Dir)
+		dir, err := options.Resolve()
+		if err != nil {
+			return err
+		}
+		loaded, err := app.Load(dir)
 		if err != nil {
 			return err
 		}
@@ -352,7 +485,11 @@ func listCommand(options Options) *cobra.Command {
 
 func listResourceCommand(options Options, resource string, asJSON *bool) *cobra.Command {
 	return &cobra.Command{Use: resource, Short: "List " + resource, Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
-		loaded, err := app.Load(options.Dir)
+		dir, err := options.Resolve()
+		if err != nil {
+			return err
+		}
+		loaded, err := app.Load(dir)
 		if err != nil {
 			return err
 		}
@@ -419,7 +556,11 @@ func listPayload(ws *model.Workspace, resource string) any {
 func describeCommand(options Options, environment *string) *cobra.Command {
 	var asJSON bool
 	command := &cobra.Command{Use: "describe <reference>", Short: "Describe a request, collection, scenario, or environment", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
-		loaded, err := app.Load(options.Dir)
+		dir, err := options.Resolve()
+		if err != nil {
+			return err
+		}
+		loaded, err := app.Load(dir)
 		if err != nil {
 			return err
 		}
@@ -591,7 +732,11 @@ func runCommand(options Options, environment *string) *cobra.Command {
 	var values []string
 	var outputJSON bool
 	command := &cobra.Command{Use: "run <request>", Short: "Run a request", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		loaded, err := app.Load(options.Dir)
+		dir, err := options.Resolve()
+		if err != nil {
+			return err
+		}
+		loaded, err := app.Load(dir)
 		if err != nil {
 			return err
 		}
@@ -616,7 +761,11 @@ func runCommand(options Options, environment *string) *cobra.Command {
 func scenarioCommand(options Options, environment *string) *cobra.Command {
 	var values []string
 	command := &cobra.Command{Use: "scenario <scenario>", Short: "Run a scenario", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		loaded, err := app.Load(options.Dir)
+		dir, err := options.Resolve()
+		if err != nil {
+			return err
+		}
+		loaded, err := app.Load(dir)
 		if err != nil {
 			return err
 		}
