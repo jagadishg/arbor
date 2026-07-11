@@ -52,14 +52,13 @@ arbor
 
 Inside Arbor:
 
-- `j` / `k` or arrow keys move through resources.
-- `Enter` runs the selected request or scenario.
-- `1`, `2`, and `3` open requests, scenarios, and environments.
-- `/` filters the current resource list.
-- `:` opens command mode.
-- `e` opens the selected YAML file in `$EDITOR`.
-- `?` shows contextual help.
-- `q` quits.
+- `j` / `k` or arrow keys move through resources; `g` / `G` jump to the first or last row.
+- `Enter` or `d` describes the selected resource, just as it does in k9s.
+- `r` runs the selected request or scenario; `l` shows its last response.
+- `y` shows the source YAML and `e` opens it in `$EDITOR`.
+- `:` opens an alias-aware command prompt; `Tab`, `Ctrl-f`, or `→` accepts a suggestion.
+- `Ctrl-a` lists resource aliases; `Esc` or `h` returns to the previous view.
+- `/` filters the current resource view incrementally; `?` shows help; `q` quits.
 
 Run the included example without opening the TUI:
 
@@ -216,18 +215,34 @@ Use `--json` with `arbor run` for machine-readable output.
 ## Commands inside the TUI
 
 ```text
-:requests                 Open requests
-:scenarios                Open scenarios
-:environments             Open environments
+:requests, :request, :req Open requests
+:scenarios, :scenario, :sc
+                          Open scenarios
+:environments, :env       Open environments
 :use staging              Switch environment
+:ctx staging              Switch environment (k9s-style context command)
 :run users.get            Run a request by reference
 :run auth.smoke           Run a scenario by reference
+:aliases                  Show all resource aliases
 :reload                   Reload files from disk
 :help                     Open keyboard help
 :quit                     Quit Arbor
 ```
 
 Arbor also reloads the workspace after returning from `$EDITOR`. Use `Ctrl-r` after any other external edit.
+
+### Workspace-local aliases
+
+Arbor includes built-in aliases such as `:req`, `:sc`, and `:env`. Add project-specific aliases in `.arbor/aliases.yaml`; they are loaded when Arbor starts and on `Ctrl-r`:
+
+```yaml
+aliases:
+  smoke: scenarios
+  api: requests
+  contexts: environments
+```
+
+Aliases intentionally target resource views, keeping command navigation as predictable as k9s while the workspace remains fully local and shareable.
 
 ## Development
 
