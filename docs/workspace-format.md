@@ -2,6 +2,8 @@
 
 Arbor workspace files use strict YAML. Unknown fields are errors, and every file has a schema version. Paths shown below are relative to the directory containing `arbor.yaml`.
 
+Every resource accepts an optional `description` field. It is never sent over the wire; it exists so both people and coding agents can understand a workspace without reverse-engineering it. Descriptions appear in `arbor describe`, `arbor list`, and the interactive describe view.
+
 ## Workspace
 
 `arbor.yaml`:
@@ -9,6 +11,7 @@ Arbor workspace files use strict YAML. Unknown fields are errors, and every file
 ```yaml
 version: 1
 name: Payments API
+description: Internal payments service API.
 defaultEnvironment: local
 
 variables:
@@ -57,6 +60,24 @@ extract:
 String bodies are sent as `text/plain`; mappings and lists are encoded as JSON. An explicit `Content-Type` header overrides Arbor's inferred value.
 
 `id` is the stable reference used by commands and scenarios. When omitted, `name` is used, but explicit IDs are strongly recommended.
+
+## Collections
+
+A collection is the folder a request lives in under `collections/`. A request in
+`collections/payments/create.yaml` belongs to the `payments` collection; requests placed
+directly in `collections/` belong to `default`. Collections are how the interactive browser
+groups requests — `:collections` lists them and `Enter` drills into a collection's requests.
+
+Add an optional `collection.yaml` marker to give a folder a description:
+
+```yaml
+version: 1
+kind: collection
+name: payments
+description: Create, capture, and refund payments.
+```
+
+`arbor new collection <name>` scaffolds one. The marker's `name` should match its folder.
 
 ## Environments
 

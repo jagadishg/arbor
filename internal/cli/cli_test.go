@@ -58,3 +58,59 @@ func TestParseVariablesRejectsMalformedValue(t *testing.T) {
 		t.Fatal("expected malformed variable error")
 	}
 }
+
+func TestNewCollectionListAndDescribe(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "demo")
+	var output bytes.Buffer
+	run := func(args ...string) {
+		t.Helper()
+		output.Reset()
+		command := New(Options{Out: &output, ErrOut: &output, Dir: root})
+		command.SetArgs(args)
+		if err := command.ExecuteContext(context.Background()); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+
+	run("init", "--name", "Demo")
+	run("new", "collection", "users", "--description", "User endpoints")
+	if _, err := os.Stat(filepath.Join(root, "collections", "users", "collection.yaml")); err != nil {
+		t.Fatalf("collection.yaml not written: %v", err)
+	}
+	run("new", "request", "users.get", "--url", "https://example.com/users/1")
+
+	run("list", "collections")
+	if !strings.Contains(output.String(), "users") || !strings.Contains(output.String(), "User endpoints") {
+		t.Fatalf("list collections output = %q", output.String())
+	}
+
+	run("describe", "users.get")
+	if !strings.Contains(output.String(), "Collection: users") {
+		t.Fatalf("describe output = %q", output.String())
+	}
+
+	run("describe", "users.get", "--json")
+	if !strings.Contains(output.String(), "\"collection\":\"users\"") {
+		t.Fatalf("describe --json output = %q", output.String())
+	}
+
+	run("describe", "users")
+	if !strings.Contains(output.String(), "users.get") {
+		t.Fatalf("collection describe should list member requests: %q", output.String())
+	}
+}
+
+func TestDescribeUnknownRefErrors(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "demo")
+	var output bytes.Buffer
+	command := New(Options{Out: &output, ErrOut: &output, Dir: root})
+	command.SetArgs([]string{"init", "--name", "Demo"})
+	if err := command.ExecuteContext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	command = New(Options{Out: &output, ErrOut: &output, Dir: root})
+	command.SetArgs([]string{"describe", "nope.missing"})
+	if err := command.ExecuteContext(context.Background()); err == nil {
+		t.Fatal("expected error for unknown ref")
+	}
+}

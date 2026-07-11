@@ -160,3 +160,55 @@ func TestConfiguredHotkeyExecutesCommand(t *testing.T) {
 		t.Fatalf("hotkey did not navigate: %s", m.section)
 	}
 }
+
+func TestCollectionsDrillDownAndBack(t *testing.T) {
+	ws := &model.Workspace{Name: "Demo", Root: "/tmp/demo",
+		Requests: []model.Request{
+			{ID: "users.get", Name: "Get", Method: "GET", URL: "https://x/1", Collection: "users"},
+			{ID: "users.create", Name: "Create", Method: "POST", URL: "https://x", Collection: "users"},
+			{ID: "billing.charge", Name: "Charge", Method: "POST", URL: "https://y", Collection: "billing"},
+		},
+		Collections: []model.Collection{{Name: "billing"}, {Name: "users"}},
+	}
+	m := NewModel(context.Background(), "/tmp/demo", "", &app.App{Workspace: ws})
+
+	m.mode, m.input = commandMode, "col"
+	_, _ = m.handleKey("enter")
+	if m.section != collectionsSection || len(m.items()) != 2 {
+		t.Fatalf(":col did not open collections: section=%s items=%d", m.section, len(m.items()))
+	}
+
+	m.selected = 1 // sorted: [billing, users]
+	_, _ = m.handleKey("enter")
+	if m.section != requestsSection || m.scope != "users" {
+		t.Fatalf("drill-down failed: section=%s scope=%q", m.section, m.scope)
+	}
+	if len(m.items()) != 2 {
+		t.Fatalf("scoped requests = %d, want 2", len(m.items()))
+	}
+
+	_, _ = m.handleKey("q")
+	if m.section != collectionsSection || m.scope != "" {
+		t.Fatalf("back did not restore collections view: section=%s scope=%q", m.section, m.scope)
+	}
+}
+
+func TestCommandAndFilterPromptRenderAtTop(t *testing.T) {
+	m := testModel()
+	_, _ = m.Update(tea.WindowSizeMsg{Width: 110, Height: 32})
+	_, _ = m.handleKey(":")
+	for _, key := range []string{"r", "e", "q"} {
+		_, _ = m.handleKey(key)
+	}
+	if view := m.View().Content; !strings.Contains(view, "❯ req") {
+		t.Fatalf("command prompt not rendered at top: %q", view)
+	}
+
+	m = testModel()
+	_, _ = m.Update(tea.WindowSizeMsg{Width: 110, Height: 32})
+	_, _ = m.handleKey("/")
+	_, _ = m.handleKey("c")
+	if view := m.View().Content; !strings.Contains(view, "🔍 c") {
+		t.Fatalf("filter prompt not rendered at top: %q", view)
+	}
+}

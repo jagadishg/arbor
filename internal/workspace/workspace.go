@@ -61,15 +61,7 @@ func Load(start string) (*model.Workspace, error) {
 	}
 	ws.Path, ws.Root = path, root
 
-	if err := loadKind(filepath.Join(root, "collections"), "request", func(path string) error {
-		var value model.Request
-		if err := decodeStrict(path, &value); err != nil {
-			return err
-		}
-		value.Path = path
-		ws.Requests = append(ws.Requests, value)
-		return nil
-	}); err != nil {
+	if err := loadCollections(root, &ws); err != nil {
 		return nil, err
 	}
 	if err := loadKind(filepath.Join(root, "environments"), "environment", func(path string) error {
@@ -126,21 +118,121 @@ func loadKind(root, expected string, load func(string) error) error {
 		if entry.IsDir() || (filepath.Ext(path) != ".yaml" && filepath.Ext(path) != ".yml") {
 			return nil
 		}
-		var header struct {
-			Kind string `yaml:"kind"`
-		}
-		data, err := os.ReadFile(path)
+		kind, err := headerKind(path)
 		if err != nil {
 			return err
 		}
-		if err := yaml.Unmarshal(data, &header); err != nil {
-			return ValidationError{Path: path, Message: err.Error()}
-		}
-		if header.Kind != expected {
-			return ValidationError{Path: path, Message: fmt.Sprintf("expected kind %q, got %q", expected, header.Kind)}
+		if kind != expected {
+			return ValidationError{Path: path, Message: fmt.Sprintf("expected kind %q, got %q", expected, kind)}
 		}
 		return load(path)
 	})
+}
+
+// loadCollections walks the collections/ tree once, accepting both request and
+// collection.yaml documents. Every request is tagged with the collection it
+// belongs to (the first path segment under collections/, or "default" for files
+// placed directly in collections/).
+func loadCollections(root string, ws *model.Workspace) error {
+	base := filepath.Join(root, "collections")
+	if _, err := os.Stat(base); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	markers := map[string]model.Collection{}
+	err := filepath.WalkDir(base, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || (filepath.Ext(path) != ".yaml" && filepath.Ext(path) != ".yml") {
+			return nil
+		}
+		kind, err := headerKind(path)
+		if err != nil {
+			return err
+		}
+		name := collectionName(base, path)
+		switch kind {
+		case "request":
+			var value model.Request
+			if err := decodeStrict(path, &value); err != nil {
+				return err
+			}
+			value.Path, value.Collection = path, name
+			ws.Requests = append(ws.Requests, value)
+		case "collection":
+			var value model.Collection
+			if err := decodeStrict(path, &value); err != nil {
+				return err
+			}
+			if value.Version != model.SchemaVersion || strings.TrimSpace(value.Name) == "" {
+				return ValidationError{Path: path, Message: "version 1 and name are required"}
+			}
+			if previous, ok := markers[name]; ok {
+				return ValidationError{Path: path, Message: fmt.Sprintf("duplicate collection %q (also in %s)", name, previous.Path)}
+			}
+			value.Path, value.Dir = path, filepath.Dir(path)
+			markers[name] = value
+		default:
+			return ValidationError{Path: path, Message: fmt.Sprintf("expected kind \"request\" or \"collection\", got %q", kind)}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	ws.Collections = buildCollections(ws.Requests, markers)
+	return nil
+}
+
+// buildCollections produces one entry per collection name seen in requests or
+// declared by a collection.yaml marker, sorted by name and enriched with any
+// marker description.
+func buildCollections(requests []model.Request, markers map[string]model.Collection) []model.Collection {
+	names := map[string]struct{}{}
+	for _, request := range requests {
+		names[request.Collection] = struct{}{}
+	}
+	for name := range markers {
+		names[name] = struct{}{}
+	}
+	collections := make([]model.Collection, 0, len(names))
+	for name := range names {
+		collection := model.Collection{Kind: "collection", Name: name}
+		if marker, ok := markers[name]; ok {
+			collection.Description, collection.Path, collection.Dir = marker.Description, marker.Path, marker.Dir
+		}
+		collections = append(collections, collection)
+	}
+	sort.Slice(collections, func(i, j int) bool { return collections[i].Name < collections[j].Name })
+	return collections
+}
+
+// collectionName returns the collection a file belongs to: the first path
+// segment beneath collections/, or "default" for files placed at its root.
+func collectionName(base, path string) string {
+	rel, err := filepath.Rel(base, path)
+	if err != nil {
+		return "default"
+	}
+	segments := strings.Split(filepath.ToSlash(rel), "/")
+	if len(segments) < 2 {
+		return "default"
+	}
+	return segments[0]
+}
+
+func headerKind(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var header struct {
+		Kind string `yaml:"kind"`
+	}
+	if err := yaml.Unmarshal(data, &header); err != nil {
+		return "", ValidationError{Path: path, Message: err.Error()}
+	}
+	return header.Kind, nil
 }
 
 func Validate(ws *model.Workspace) []error {

@@ -1,6 +1,7 @@
 version: 1
 kind: environment
 name: demo
+description: Public GitHub API, no authentication required.
 
 variables:
   base_url: https://api.github.com

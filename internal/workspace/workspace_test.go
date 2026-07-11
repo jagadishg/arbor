@@ -34,6 +34,45 @@ func TestLoadRejectsUnknownFields(t *testing.T) {
 	}
 }
 
+func TestLoadDerivesCollectionsAndMetadata(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "arbor.yaml", "version: 1\nname: Demo\n")
+	write(t, root, "collections/users/get.yaml", "version: 1\nkind: request\nid: users.get\nname: Get user\ndescription: Fetch a user.\nmethod: GET\nurl: 'https://x/users/1'\n")
+	write(t, root, "collections/users/collection.yaml", "version: 1\nkind: collection\nname: users\ndescription: User endpoints.\n")
+	write(t, root, "collections/health.yaml", "version: 1\nkind: request\nid: health\nname: Health\nmethod: GET\nurl: 'https://x/health'\n")
+
+	ws, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(ws.Collections) != 2 {
+		t.Fatalf("expected 2 collections, got %d: %#v", len(ws.Collections), ws.Collections)
+	}
+	users, ok := ws.CollectionByName("users")
+	if !ok || users.Description != "User endpoints." {
+		t.Fatalf("users collection metadata missing: %#v (%v)", users, ok)
+	}
+	if got := ws.RequestsInCollection("users"); len(got) != 1 || got[0].Ref() != "users.get" {
+		t.Fatalf("unexpected requests in users collection: %#v", got)
+	}
+	if request, _ := ws.RequestByRef("users.get"); request.Description != "Fetch a user." {
+		t.Fatalf("description not loaded: %#v", request)
+	}
+	if _, ok := ws.CollectionByName("default"); !ok {
+		t.Fatalf("top-level request should belong to the default collection: %#v", ws.Collections)
+	}
+}
+
+func TestLoadRejectsDuplicateCollections(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "arbor.yaml", "version: 1\nname: Demo\n")
+	write(t, root, "collections/users/collection.yaml", "version: 1\nkind: collection\nname: users\n")
+	write(t, root, "collections/users/nested/collection.yaml", "version: 1\nkind: collection\nname: users\n")
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "duplicate collection") {
+		t.Fatalf("expected duplicate collection error, got %v", err)
+	}
+}
+
 func write(t *testing.T, root, name, contents string) {
 	t.Helper()
 	path := filepath.Join(root, name)

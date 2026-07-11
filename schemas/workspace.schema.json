@@ -8,6 +8,7 @@
   "properties": {
     "version": { "const": 1 },
     "name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
     "defaultEnvironment": { "type": "string" },
     "variables": { "type": "object", "additionalProperties": { "type": "string" } },
     "http": {

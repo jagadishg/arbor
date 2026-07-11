@@ -2,6 +2,7 @@ version: 1
 kind: scenario
 id: github.profile
 name: GitHub profile lookup
+description: Fetch a user, then re-fetch them by the id extracted from the first response.
 
 steps:
   - request: github.user

@@ -28,6 +28,7 @@ Arbor brings the speed and familiarity of k9s to API development. Browse collect
 - **One engine everywhere:** the TUI, command line, and CI execute the same definitions.
 - **Secrets stay secret:** resolve values from environment variables or the operating system keychain, with automatic redaction.
 - **Composable tests:** assertions and extracted values turn requests into repeatable API scenarios.
+- **Agent ready:** descriptions on every resource and `--json` output make a workspace legible to coding agents as well as people.
 
 ## Installation
 
@@ -53,10 +54,10 @@ arbor
 Inside Arbor:
 
 - `j` / `k` or arrow keys move through resources; `g` / `G` jump to the first or last row.
-- `Enter` or `d` describes the selected resource, just as it does in k9s.
+- `Enter` or `d` describes the selected resource, just as it does in k9s; in the collections view `Enter` drills into that collection's requests.
 - `r` runs the selected request or scenario; `l` shows its last response.
 - `y` shows the source YAML and `e` opens it in `$EDITOR`.
-- `:` opens an alias-aware command prompt; `Tab`, `Ctrl-f`, or `→` accepts a suggestion.
+- `:` opens an alias-aware command prompt at the top of the screen with an autocomplete list; `Tab`, `Ctrl-f`, or `→` accepts a suggestion.
 - `Ctrl-a` lists resource aliases; `Esc` or `h` returns to the previous view.
 - `/` filters the current resource view incrementally; `?` shows help; `q` or `Esc` goes back; `Ctrl-c` quits.
 
@@ -76,6 +77,7 @@ my-api/
 ├── arbor.yaml
 ├── collections/
 │   └── users/
+│       ├── collection.yaml
 │       ├── get.yaml
 │       └── create.yaml
 ├── environments/
@@ -106,6 +108,7 @@ version: 1
 kind: request
 id: users.get
 name: Get user
+description: Fetch a single user by id.
 method: GET
 url: "{{base_url}}/{{api_version}}/users/{{user_id}}"
 
@@ -123,6 +126,13 @@ assert:
 extract:
   email: body.email
 ```
+
+The folder a request lives in is its **collection** (`collections/users/get.yaml` → the
+`users` collection). Add an optional `collections/users/collection.yaml` marker to give a
+collection a description. Every resource — workspace, request, collection, environment,
+scenario — accepts an optional `description` field. Descriptions are never sent over the
+wire; they exist so people *and* coding agents can understand a workspace without opening
+every file.
 
 See [Workspace format](docs/workspace-format.md) for the full schema and precedence rules.
 
@@ -192,17 +202,24 @@ The command exits non-zero when transport, extraction, or assertion failures occ
 arbor                              Open the interactive workspace
 arbor init                         Initialize a workspace
 arbor new request <ref>            Create a request
+arbor new collection <name>        Create a collection
 arbor new environment <name>       Create an environment
 arbor new scenario <ref>           Create a scenario
 arbor validate                     Validate all workspace files
 arbor list requests                List request references
+arbor list collections             List collections
 arbor list environments            List environments
 arbor list scenarios               List scenario references
+arbor describe <ref>               Describe any resource (add --json for agents)
 arbor run <ref>                    Run one request
 arbor scenario <ref>               Run a scenario
 arbor secret set <name>            Store a keychain secret
 arbor secret delete <name>         Delete a keychain secret
 ```
+
+`arbor describe <ref> --json` and `arbor list <resource> --json` emit machine-readable
+output — a discovery surface a coding agent can read to work in the workspace without
+opening each file.
 
 Runtime variables can be supplied without editing files:
 
@@ -216,6 +233,7 @@ Use `--json` with `arbor run` for machine-readable output.
 
 ```text
 :requests, :request, :req Open requests
+:collections, :col        Open collections (Enter drills into a collection)
 :scenarios, :scenario, :sc
                           Open scenarios
 :environments, :env       Open environments

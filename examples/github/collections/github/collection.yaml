@@ -1,0 +1,4 @@
+version: 1
+kind: collection
+name: github
+description: Public GitHub REST API endpoints used by the example scenario.

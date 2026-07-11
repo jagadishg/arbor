@@ -2,6 +2,7 @@ version: 1
 kind: request
 id: github.user-by-id
 name: Get GitHub user by ID
+description: Resolve a GitHub account by the numeric id extracted from github.user.
 method: GET
 url: "{{base_url}}/user/{{account_id}}"
 

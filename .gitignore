@@ -1,4 +1,5 @@
 /arbor
+/bin/
 /dist/
 *.test
 *.out

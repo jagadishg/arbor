@@ -17,6 +17,7 @@ import (
 	"github.com/jagadishg/arbor/internal/buildinfo"
 	"github.com/jagadishg/arbor/internal/model"
 	"github.com/jagadishg/arbor/internal/secrets"
+	"github.com/jagadishg/arbor/internal/variables"
 	"github.com/jagadishg/arbor/internal/workspace"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -59,13 +60,33 @@ func New(options Options) *cobra.Command {
 	root.SetOut(options.Out)
 	root.SetErr(options.ErrOut)
 	root.PersistentFlags().StringVarP(&environment, "env", "e", "", "environment to use")
-	root.AddCommand(initCommand(options), newCommand(options), validateCommand(options), listCommand(options), runCommand(options, &environment), scenarioCommand(options, &environment), secretCommand(options, &environment))
+	root.AddCommand(initCommand(options), newCommand(options), validateCommand(options), listCommand(options), describeCommand(options, &environment), runCommand(options, &environment), scenarioCommand(options, &environment), secretCommand(options, &environment))
 	return root
 }
 
 func newCommand(options Options) *cobra.Command {
 	command := &cobra.Command{Use: "new", Short: "Create a workspace resource"}
-	command.AddCommand(newRequestCommand(options), newEnvironmentCommand(options), newScenarioCommand(options))
+	command.AddCommand(newRequestCommand(options), newCollectionCommand(options), newEnvironmentCommand(options), newScenarioCommand(options))
+	return command
+}
+
+func newCollectionCommand(options Options) *cobra.Command {
+	var description string
+	command := &cobra.Command{Use: "collection <name>", Aliases: []string{"col"}, Short: "Create a collection", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
+		root, err := workspace.FindRoot(options.Dir)
+		if err != nil {
+			return err
+		}
+		name := safeName(args[0])
+		value := model.Collection{Version: model.SchemaVersion, Kind: "collection", Name: name, Description: description}
+		path := filepath.Join(root, "collections", name, "collection.yaml")
+		if err := writeResource(path, value); err != nil {
+			return err
+		}
+		fmt.Fprintf(options.Out, "Created collection %s at %s\n", name, path)
+		return nil
+	}}
+	command.Flags().StringVarP(&description, "description", "d", "", "collection description")
 	return command
 }
 
@@ -297,7 +318,12 @@ func initialize(directory, name string) error {
 	if err := os.WriteFile(filepath.Join(root, "environments", "local.yaml"), []byte(environment), 0o644); err != nil {
 		return err
 	}
-	return nil
+	collectionDir := filepath.Join(root, "collections", "example")
+	if err := os.MkdirAll(collectionDir, 0o755); err != nil {
+		return err
+	}
+	collection := "version: 1\nkind: collection\nname: example\ndescription: Group related requests under collections/<name>/. Delete this once you add your own.\n"
+	return os.WriteFile(filepath.Join(collectionDir, "collection.yaml"), []byte(collection), 0o644)
 }
 
 func validateCommand(options Options) *cobra.Command {
@@ -312,22 +338,36 @@ func validateCommand(options Options) *cobra.Command {
 }
 
 func listCommand(options Options) *cobra.Command {
+	var asJSON bool
 	command := &cobra.Command{Use: "list", Short: "List workspace resources"}
-	command.AddCommand(listResourceCommand(options, "requests"), listResourceCommand(options, "environments"), listResourceCommand(options, "scenarios"))
+	command.PersistentFlags().BoolVar(&asJSON, "json", false, "print machine-readable output")
+	command.AddCommand(
+		listResourceCommand(options, "requests", &asJSON),
+		listResourceCommand(options, "collections", &asJSON),
+		listResourceCommand(options, "environments", &asJSON),
+		listResourceCommand(options, "scenarios", &asJSON),
+	)
 	return command
 }
 
-func listResourceCommand(options Options, resource string) *cobra.Command {
+func listResourceCommand(options Options, resource string, asJSON *bool) *cobra.Command {
 	return &cobra.Command{Use: resource, Short: "List " + resource, Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
 		loaded, err := app.Load(options.Dir)
 		if err != nil {
 			return err
+		}
+		if *asJSON {
+			return json.NewEncoder(options.Out).Encode(listPayload(loaded.Workspace, resource))
 		}
 		var rows []string
 		switch resource {
 		case "requests":
 			for _, item := range loaded.Workspace.Requests {
 				rows = append(rows, fmt.Sprintf("%-8s  %-28s  %s", strings.ToUpper(item.Method), item.Ref(), item.Name))
+			}
+		case "collections":
+			for _, item := range loaded.Workspace.Collections {
+				rows = append(rows, fmt.Sprintf("%-20s  %2d requests  %s", item.Name, len(loaded.Workspace.RequestsInCollection(item.Name)), item.Description))
 			}
 		case "environments":
 			for _, item := range loaded.Workspace.Environments {
@@ -344,6 +384,207 @@ func listResourceCommand(options Options, resource string) *cobra.Command {
 		}
 		return nil
 	}}
+}
+
+func listPayload(ws *model.Workspace, resource string) any {
+	switch resource {
+	case "requests":
+		out := make([]map[string]any, 0, len(ws.Requests))
+		for _, item := range ws.Requests {
+			out = append(out, map[string]any{"ref": item.Ref(), "name": item.Name, "method": strings.ToUpper(item.Method), "url": item.URL, "collection": item.Collection, "description": item.Description})
+		}
+		return out
+	case "collections":
+		out := make([]map[string]any, 0, len(ws.Collections))
+		for _, item := range ws.Collections {
+			out = append(out, map[string]any{"name": item.Name, "requests": len(ws.RequestsInCollection(item.Name)), "description": item.Description})
+		}
+		return out
+	case "environments":
+		out := make([]map[string]any, 0, len(ws.Environments))
+		for _, item := range ws.Environments {
+			out = append(out, map[string]any{"name": item.Name, "variables": len(item.Variables), "secrets": len(item.Secrets), "description": item.Description})
+		}
+		return out
+	case "scenarios":
+		out := make([]map[string]any, 0, len(ws.Scenarios))
+		for _, item := range ws.Scenarios {
+			out = append(out, map[string]any{"ref": item.Ref(), "name": item.Name, "steps": len(item.Steps), "description": item.Description})
+		}
+		return out
+	}
+	return nil
+}
+
+func describeCommand(options Options, environment *string) *cobra.Command {
+	var asJSON bool
+	command := &cobra.Command{Use: "describe <reference>", Short: "Describe a request, collection, scenario, or environment", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
+		loaded, err := app.Load(options.Dir)
+		if err != nil {
+			return err
+		}
+		described, err := describeResource(loaded, *environment, args[0])
+		if err != nil {
+			return err
+		}
+		if asJSON {
+			return json.NewEncoder(options.Out).Encode(described)
+		}
+		printDescription(options.Out, described)
+		return nil
+	}}
+	command.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
+	return command
+}
+
+// description is the resolved, redacted view of one resource. It is the surface
+// an agent can read to understand the workspace without opening every file.
+type description struct {
+	Kind        string            `json:"kind"`
+	Ref         string            `json:"ref,omitempty"`
+	Name        string            `json:"name,omitempty"`
+	Description string            `json:"description,omitempty"`
+	Collection  string            `json:"collection,omitempty"`
+	Method      string            `json:"method,omitempty"`
+	URL         string            `json:"url,omitempty"`
+	ResolvedURL string            `json:"resolvedUrl,omitempty"`
+	File        string            `json:"file,omitempty"`
+	Headers     map[string]string `json:"headers,omitempty"`
+	Query       map[string]string `json:"query,omitempty"`
+	Assert      []string          `json:"assert,omitempty"`
+	Extract     map[string]string `json:"extract,omitempty"`
+	Steps       []string          `json:"steps,omitempty"`
+	Requests    []string          `json:"requests,omitempty"`
+	Variables   map[string]string `json:"variables,omitempty"`
+	Secrets     []string          `json:"secrets,omitempty"`
+	Environment string            `json:"environment,omitempty"`
+}
+
+func describeResource(loaded *app.App, environment, ref string) (description, error) {
+	ws := loaded.Workspace
+	if request, ok := ws.RequestByRef(ref); ok {
+		out := description{Kind: "request", Ref: request.Ref(), Name: request.Name, Description: request.Description, Collection: firstOr(request.Collection, "default"), Method: strings.ToUpper(request.Method), URL: request.URL, File: relPath(ws.Root, request.Path), Headers: request.Headers, Query: request.Query, Assert: request.Assert, Extract: request.Extract, Environment: firstOr(environment, ws.DefaultEnv)}
+		if vars, err := loaded.Variables(environment, nil); err == nil {
+			if resolved, err := vars.Resolve(request.URL); err == nil {
+				out.ResolvedURL = vars.Redact(resolved)
+			}
+			out.Variables = redactedValues(vars)
+		}
+		return out, nil
+	}
+	if scenario, ok := ws.ScenarioByRef(ref); ok {
+		out := description{Kind: "scenario", Ref: scenario.Ref(), Name: scenario.Name, Description: scenario.Description, File: relPath(ws.Root, scenario.Path)}
+		for _, step := range scenario.Steps {
+			out.Steps = append(out.Steps, step.Request)
+		}
+		return out, nil
+	}
+	if environmentValue, ok := ws.EnvironmentByName(ref); ok {
+		out := description{Kind: "environment", Name: environmentValue.Name, Description: environmentValue.Description, File: relPath(ws.Root, environmentValue.Path), Variables: environmentValue.Variables}
+		for _, name := range sortedStrings(environmentValue.Secrets) {
+			out.Secrets = append(out.Secrets, name)
+		}
+		return out, nil
+	}
+	if collection, ok := ws.CollectionByName(ref); ok {
+		out := description{Kind: "collection", Name: collection.Name, Description: collection.Description}
+		if collection.Path != "" {
+			out.File = relPath(ws.Root, collection.Path)
+		}
+		requests := ws.RequestsInCollection(collection.Name)
+		sort.Slice(requests, func(i, j int) bool { return requests[i].Ref() < requests[j].Ref() })
+		for _, request := range requests {
+			out.Requests = append(out.Requests, request.Ref())
+		}
+		return out, nil
+	}
+	return description{}, fmt.Errorf("resource %q not found", ref)
+}
+
+func printDescription(out io.Writer, d description) {
+	fmt.Fprintf(out, "%s: %s\n", strings.ToUpper(d.Kind[:1])+d.Kind[1:], firstOr(d.Ref, d.Name))
+	if d.Ref != "" && d.Name != "" && d.Name != d.Ref {
+		fmt.Fprintf(out, "Name: %s\n", d.Name)
+	}
+	if d.Description != "" {
+		fmt.Fprintf(out, "Description: %s\n", d.Description)
+	}
+	if d.Collection != "" {
+		fmt.Fprintf(out, "Collection: %s\n", d.Collection)
+	}
+	if d.Method != "" {
+		fmt.Fprintf(out, "Method: %s\n", d.Method)
+	}
+	if d.URL != "" {
+		fmt.Fprintf(out, "URL: %s\n", d.URL)
+	}
+	if d.ResolvedURL != "" && d.ResolvedURL != d.URL {
+		fmt.Fprintf(out, "Resolved: %s\n", d.ResolvedURL)
+	}
+	if d.File != "" {
+		fmt.Fprintf(out, "File: %s\n", d.File)
+	}
+	printSection(out, "Headers", mapLines(d.Headers))
+	printSection(out, "Query", mapLines(d.Query))
+	printSection(out, "Assertions", d.Assert)
+	printSection(out, "Extract", mapLines(d.Extract))
+	printSection(out, "Steps", d.Steps)
+	printSection(out, "Requests", d.Requests)
+	printSection(out, "Variables", mapLines(d.Variables))
+	printSection(out, "Secrets", d.Secrets)
+}
+
+func printSection(out io.Writer, title string, lines []string) {
+	if len(lines) == 0 {
+		return
+	}
+	fmt.Fprintf(out, "\n%s\n", title)
+	sort.Strings(lines)
+	for _, line := range lines {
+		fmt.Fprintf(out, "  %s\n", line)
+	}
+}
+
+func mapLines(values map[string]string) []string {
+	lines := make([]string, 0, len(values))
+	for key, value := range values {
+		lines = append(lines, key+": "+value)
+	}
+	return lines
+}
+
+func redactedValues(vars *variables.Set) map[string]string {
+	values := vars.Values()
+	for key, value := range values {
+		values[key] = vars.Redact(value)
+	}
+	return values
+}
+
+func sortedStrings(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func relPath(root, path string) string {
+	if path == "" {
+		return ""
+	}
+	if value, err := filepath.Rel(root, path); err == nil {
+		return value
+	}
+	return path
+}
+
+func firstOr(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func runCommand(options Options, environment *string) *cobra.Command {

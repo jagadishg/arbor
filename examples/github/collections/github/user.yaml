@@ -2,6 +2,7 @@ version: 1
 kind: request
 id: github.user
 name: Get GitHub user
+description: Look up a public GitHub account by username.
 method: GET
 url: "{{base_url}}/users/{{username}}"
 

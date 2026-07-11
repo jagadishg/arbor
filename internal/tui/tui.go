@@ -27,12 +27,13 @@ type section int
 
 const (
 	requestsSection section = iota
+	collectionsSection
 	scenariosSection
 	environmentsSection
 )
 
 func (s section) String() string {
-	return []string{"requests", "scenarios", "environments"}[s]
+	return []string{"requests", "collections", "scenarios", "environments"}[s]
 }
 
 type inputMode int
@@ -57,6 +58,7 @@ const (
 type viewLocation struct {
 	section  section
 	filter   string
+	scope    string
 	selected int
 }
 
@@ -78,6 +80,7 @@ type Model struct {
 	section     section
 	selected    int
 	filter      string
+	scope       string
 	history     []viewLocation
 	forward     []viewLocation
 	wide        bool
@@ -206,7 +209,13 @@ func (m *Model) handleKey(key string) (tea.Model, tea.Cmd) {
 		m.move(max(1, m.tableHeight()/2))
 	case "ctrl+u", "ctrl+b", "pageup":
 		m.move(-max(1, m.tableHeight()/2))
-	case "enter", "d":
+	case "enter":
+		if m.section == collectionsSection {
+			m.drillIntoCollection()
+		} else {
+			m.overlay, m.overlayOffset = describeOverlay, 0
+		}
+	case "d":
 		m.overlay, m.overlayOffset = describeOverlay, 0
 	case "y":
 		m.overlay, m.overlayOffset = yamlOverlay, 0
@@ -360,7 +369,7 @@ func (m *Model) executeCommand(command string) (tea.Model, tea.Cmd) {
 		if len(fields) > 1 && strings.HasPrefix(fields[1], "/") {
 			filter = strings.TrimPrefix(strings.Join(fields[1:], " "), "/")
 		}
-		m.navigate(sectionFor(target), filter)
+		m.navigate(sectionFor(target), filter, "")
 		return m, nil
 	}
 	switch verb {
@@ -374,7 +383,7 @@ func (m *Model) executeCommand(command string) (tea.Model, tea.Cmd) {
 		return m, m.reloadCmd()
 	case "use", "context", "ctx":
 		if len(fields) == 1 && (verb == "context" || verb == "ctx") {
-			m.navigate(environmentsSection, "")
+			m.navigate(environmentsSection, "", "")
 			m.message = "Select an environment and press r to set context"
 			return m, nil
 		}
@@ -405,12 +414,12 @@ func (m *Model) executeCommand(command string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) navigate(next section, filter string) {
-	if m.section != next || m.filter != filter {
-		m.history = append(m.history, viewLocation{m.section, m.filter, m.selected})
+func (m *Model) navigate(next section, filter, scope string) {
+	if m.section != next || m.filter != filter || m.scope != scope {
+		m.history = append(m.history, viewLocation{m.section, m.filter, m.scope, m.selected})
 		m.forward = nil
 	}
-	m.section, m.filter, m.selected = next, filter, 0
+	m.section, m.filter, m.scope, m.selected = next, filter, scope, 0
 	m.message = "Viewing " + next.String()
 }
 
@@ -420,9 +429,9 @@ func (m *Model) goBack() {
 		return
 	}
 	last := m.history[len(m.history)-1]
-	m.forward = append(m.forward, viewLocation{m.section, m.filter, m.selected})
+	m.forward = append(m.forward, viewLocation{m.section, m.filter, m.scope, m.selected})
 	m.history = m.history[:len(m.history)-1]
-	m.section, m.filter, m.selected = last.section, last.filter, last.selected
+	m.section, m.filter, m.scope, m.selected = last.section, last.filter, last.scope, last.selected
 	m.message = "Back to " + m.section.String()
 }
 
@@ -432,20 +441,33 @@ func (m *Model) goForward() {
 		return
 	}
 	last := m.forward[len(m.forward)-1]
-	m.history = append(m.history, viewLocation{m.section, m.filter, m.selected})
+	m.history = append(m.history, viewLocation{m.section, m.filter, m.scope, m.selected})
 	m.forward = m.forward[:len(m.forward)-1]
-	m.section, m.filter, m.selected = last.section, last.filter, last.selected
+	m.section, m.filter, m.scope, m.selected = last.section, last.filter, last.scope, last.selected
 	m.message = "Forward to " + m.section.String()
 }
 
 func sectionFor(target string) section {
 	switch target {
+	case "collections":
+		return collectionsSection
 	case "scenarios":
 		return scenariosSection
 	case "environments":
 		return environmentsSection
 	default:
 		return requestsSection
+	}
+}
+
+func (m *Model) drillIntoCollection() {
+	items := m.items()
+	if len(items) == 0 {
+		return
+	}
+	if collection, ok := items[m.selected].value.(model.Collection); ok {
+		m.navigate(requestsSection, "", collection.Name)
+		m.message = "Viewing collection " + collection.Name
 	}
 }
 
@@ -534,6 +556,11 @@ func (m *Model) selectedPath() string {
 	switch value := items[m.selected].value.(type) {
 	case model.Request:
 		return value.Path
+	case model.Collection:
+		if value.Path != "" {
+			return value.Path
+		}
+		return value.Dir
 	case model.Scenario:
 		return value.Path
 	case model.Environment:
@@ -566,9 +593,24 @@ func (m *Model) items() []item {
 	switch m.section {
 	case requestsSection:
 		requests := append([]model.Request(nil), m.app.Workspace.Requests...)
+		if m.scope != "" {
+			scoped := requests[:0]
+			for _, request := range requests {
+				if request.Collection == m.scope {
+					scoped = append(scoped, request)
+				}
+			}
+			requests = scoped
+		}
 		sort.Slice(requests, func(i, j int) bool { return requests[i].Ref() < requests[j].Ref() })
 		for _, request := range requests {
 			values = append(values, item{request.Ref(), request})
+		}
+	case collectionsSection:
+		collections := append([]model.Collection(nil), m.app.Workspace.Collections...)
+		sort.Slice(collections, func(i, j int) bool { return collections[i].Name < collections[j].Name })
+		for _, collection := range collections {
+			values = append(values, item{collection.Name, collection})
 		}
 	case scenariosSection:
 		scenarios := append([]model.Scenario(nil), m.app.Workspace.Scenarios...)
@@ -599,6 +641,8 @@ func (m *Model) itemSearchText(item item) string {
 	switch value := item.value.(type) {
 	case model.Request:
 		return value.Ref() + " " + value.Name + " " + value.Method + " " + value.URL
+	case model.Collection:
+		return value.Name + " " + value.Description
 	case model.Scenario:
 		return value.Ref() + " " + value.Name
 	case model.Environment:
@@ -651,14 +695,30 @@ func (m *Model) suggestions() []suggestion {
 				values = append(values, suggestion{alias, target + " view"})
 			}
 		}
-		for _, command := range []suggestion{{"aliases", "show resource aliases"}, {"help", "show keyboard shortcuts"}, {"reload", "reload workspace files"}, {"use", "switch environment"}, {"ctx", "switch environment"}, {"run", "run a request or scenario"}, {"quit", "quit Arbor"}} {
+		for _, command := range []suggestion{{"requests", "browse requests"}, {"collections", "browse collections"}, {"scenarios", "browse scenarios"}, {"environments", "browse environments"}, {"aliases", "show resource aliases"}, {"help", "show keyboard shortcuts"}, {"reload", "reload workspace files"}, {"use", "switch environment"}, {"ctx", "switch environment"}, {"run", "run a request or scenario"}, {"quit", "quit Arbor"}} {
 			if strings.HasPrefix(command.value, input) {
 				values = append(values, command)
 			}
 		}
 	}
-	sort.Slice(values, func(i, j int) bool { return values[i].value < values[j].value })
-	return values
+	// Collapse duplicates (a resource word is both an alias and a command),
+	// preferring the more descriptive entry over the generic "… view" label.
+	deduped := map[string]suggestion{}
+	for _, value := range values {
+		if existing, ok := deduped[value.value]; ok {
+			if strings.HasSuffix(existing.description, " view") && !strings.HasSuffix(value.description, " view") {
+				deduped[value.value] = value
+			}
+			continue
+		}
+		deduped[value.value] = value
+	}
+	unique := make([]suggestion, 0, len(deduped))
+	for _, value := range deduped {
+		unique = append(unique, value)
+	}
+	sort.Slice(unique, func(i, j int) bool { return unique[i].value < unique[j].value })
+	return unique
 }
 
 func (m *Model) View() tea.View {
@@ -682,12 +742,49 @@ var (
 func (m *Model) render() string {
 	width, height := max(m.width, 50), max(m.height, 12)
 	header, footer := m.renderHeader(width), m.renderFooter(width)
-	bodyHeight := max(3, height-lipgloss.Height(header)-lipgloss.Height(footer))
 	if m.overlay != noOverlay {
 		return lipgloss.NewStyle().Foreground(foreground).Render(header + "\n" + m.renderOverlay(width, height-lipgloss.Height(header)))
 	}
+	sections := header
+	promptHeight := 0
+	if m.mode == commandMode || m.mode == filterMode {
+		prompt := m.renderPrompt(width)
+		sections += "\n" + prompt
+		promptHeight = lipgloss.Height(prompt)
+	}
+	bodyHeight := max(3, height-lipgloss.Height(header)-lipgloss.Height(footer)-promptHeight)
 	body := m.renderTable(width, bodyHeight)
-	return lipgloss.NewStyle().Foreground(foreground).Render(header + "\n" + body + "\n" + footer)
+	sections += "\n" + body + "\n" + footer
+	return lipgloss.NewStyle().Foreground(foreground).Render(sections)
+}
+
+// renderPrompt draws the k9s-style command or filter prompt directly beneath the
+// header, with the autocomplete list below it in command mode.
+func (m *Model) renderPrompt(width int) string {
+	if m.mode == filterMode {
+		bar := lipgloss.NewStyle().Background(red).Foreground(lipgloss.Color("#1A1B26")).Bold(true).Width(width).Render(" 🔍 " + m.input + "▊")
+		hint := lipgloss.NewStyle().Foreground(muted).Render("  incremental filter  [enter] keep  [esc] cancel")
+		return bar + "\n" + hint
+	}
+	bar := lipgloss.NewStyle().Background(panel).Foreground(green).Bold(true).Width(width).Render(" ❯ " + m.input + "▊")
+	lines := []string{bar}
+	suggestions := m.suggestions()
+	if len(suggestions) > 0 {
+		start := 0
+		if m.suggestion >= 5 {
+			start = m.suggestion - 4
+		}
+		end := min(len(suggestions), start+5)
+		for index := start; index < end; index++ {
+			prefix, style := "  ", lipgloss.NewStyle().Foreground(muted)
+			if index == m.suggestion {
+				prefix, style = "› ", lipgloss.NewStyle().Foreground(green).Bold(true)
+			}
+			lines = append(lines, style.Render(prefix+suggestions[index].value+"  "+suggestions[index].description))
+		}
+	}
+	lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render("  [enter] execute  [tab] complete  [esc] cancel"))
+	return strings.Join(lines, "\n")
 }
 
 func (m *Model) renderHeader(width int) string {
@@ -721,11 +818,15 @@ func (m *Model) renderHeader(width int) string {
 func (m *Model) renderTable(width, height int) string {
 	items := m.items()
 	inner := max(20, width-2)
-	scope := "all"
+	filterScope := "all"
 	if m.filter != "" {
-		scope = "/" + m.filter
+		filterScope = "/" + m.filter
 	}
-	title := fmt.Sprintf("─ %s(%s)[%d] ", m.section.String(), scope, len(items))
+	label := m.section.String()
+	if m.section == requestsSection && m.scope != "" {
+		label += "·" + m.scope
+	}
+	title := fmt.Sprintf("─ %s(%s)[%d] ", label, filterScope, len(items))
 	top := "┌" + lipgloss.NewStyle().Foreground(blue).Bold(true).Render(title) + strings.Repeat("─", max(0, inner-lipgloss.Width(title))) + "┐"
 	lines := []string{top, m.frameLine(m.tableHeader(inner), inner)}
 	available := max(1, height-3)
@@ -762,6 +863,9 @@ func (m *Model) tableHeader(width int) string {
 			line += " FILE"
 		}
 		return style.Render(line)
+	case collectionsSection:
+		nameWidth := min(28, max(16, width/3))
+		return style.Render(fmt.Sprintf("  %-*s %-9s %s", nameWidth, "NAME", "REQUESTS", "DESCRIPTION"))
 	case scenariosSection:
 		nameWidth := max(18, width-24)
 		return style.Render(fmt.Sprintf("  %-*s %-8s %s", nameWidth, "NAME", "STEPS", "ON FAILURE"))
@@ -784,6 +888,11 @@ func (m *Model) tableRow(index int, item item, width int) string {
 			line += " " + truncate(relative(m.app.Workspace.Root, value.Path), 18)
 		}
 		return style.Render(line)
+	case model.Collection:
+		nameWidth := min(28, max(16, width/3))
+		count := len(m.app.Workspace.RequestsInCollection(value.Name))
+		descWidth := max(10, width-nameWidth-13)
+		return style.Render(fmt.Sprintf("%s%-*s %-9d %s", prefix, nameWidth, truncate(value.Name, nameWidth), count, truncate(value.Description, descWidth)))
 	case model.Scenario:
 		mode := "STOP"
 		if value.ContinueOnFailure {
@@ -850,7 +959,10 @@ func (m *Model) describeSelected() string {
 	}
 	switch value := items[m.selected].value.(type) {
 	case model.Request:
-		lines := []string{"Name: " + value.Name, "Reference: " + value.Ref(), "Method: " + strings.ToUpper(value.Method), "URL: " + value.URL, "File: " + relative(m.app.Workspace.Root, value.Path)}
+		lines := []string{"Name: " + value.Name, "Reference: " + value.Ref(), "Collection: " + firstOr(value.Collection, "default"), "Method: " + strings.ToUpper(value.Method), "URL: " + value.URL, "File: " + relative(m.app.Workspace.Root, value.Path)}
+		if value.Description != "" {
+			lines = append(lines, "", value.Description)
+		}
 		if len(value.Headers) > 0 {
 			lines = append(lines, "", "Headers")
 			for _, key := range sortedKeys(value.Headers) {
@@ -864,14 +976,37 @@ func (m *Model) describeSelected() string {
 			}
 		}
 		return strings.Join(lines, "\n")
+	case model.Collection:
+		requests := m.app.Workspace.RequestsInCollection(value.Name)
+		lines := []string{"Collection: " + value.Name}
+		if value.Path != "" {
+			lines = append(lines, "File: "+relative(m.app.Workspace.Root, value.Path))
+		}
+		if value.Description != "" {
+			lines = append(lines, "", value.Description)
+		}
+		lines = append(lines, "", fmt.Sprintf("Requests (%d)", len(requests)))
+		sort.Slice(requests, func(i, j int) bool { return requests[i].Ref() < requests[j].Ref() })
+		for _, request := range requests {
+			lines = append(lines, fmt.Sprintf("  %-8s %s", strings.ToUpper(request.Method), request.Ref()))
+		}
+		return strings.Join(lines, "\n")
 	case model.Scenario:
-		lines := []string{"Name: " + value.Name, "Reference: " + value.Ref(), "File: " + relative(m.app.Workspace.Root, value.Path), "", "Steps"}
+		lines := []string{"Name: " + value.Name, "Reference: " + value.Ref(), "File: " + relative(m.app.Workspace.Root, value.Path)}
+		if value.Description != "" {
+			lines = append(lines, "", value.Description)
+		}
+		lines = append(lines, "", "Steps")
 		for index, step := range value.Steps {
 			lines = append(lines, fmt.Sprintf("  %d. %s", index+1, step.Request))
 		}
 		return strings.Join(lines, "\n")
 	case model.Environment:
-		lines := []string{"Name: " + value.Name, "File: " + relative(m.app.Workspace.Root, value.Path), "", "Variables"}
+		lines := []string{"Name: " + value.Name, "File: " + relative(m.app.Workspace.Root, value.Path)}
+		if value.Description != "" {
+			lines = append(lines, "", value.Description)
+		}
+		lines = append(lines, "", "Variables")
 		for _, key := range sortedKeys(value.Variables) {
 			lines = append(lines, "  "+key+": "+value.Variables[key])
 		}
@@ -952,7 +1087,7 @@ func (m *Model) responseContent(width int) string {
 
 func (m *Model) helpContent() string {
 	help := strings.Join([]string{
-		"Navigation", "  j/k, ↑/↓     move selection", "  g/G          first/last resource", "  Ctrl-f/b     page down/up", "  Esc, q, h, [ back through view history", "  ], →         forward through view history", "", "Resource actions", "  Enter, d     describe selected resource", "  y            show YAML", "  e            edit in $EDITOR", "  r            run selected request or scenario", "  l            show last response (like logs)", "  Ctrl-w       toggle wide table columns", "", "Views and commands", "  :            command mode", "  Ctrl-a       show resource aliases", "  /            filter the current resource view", "  Tab/Ctrl-f/→ accept command suggestion", "  ↑/↓          choose command suggestion", "  Ctrl-u       clear command; Ctrl-w removes its last word", "  Ctrl-r       reload workspace", "  ?            this help", "  Ctrl-c, :q   quit (or cancel a running request)",
+		"Navigation", "  j/k, ↑/↓     move selection", "  g/G          first/last resource", "  Ctrl-f/b     page down/up", "  Enter        drill into a collection (or describe)", "  Esc, q, h, [ back through view history", "  ], →         forward through view history", "", "Resource actions", "  Enter, d     describe selected resource", "  y            show YAML", "  e            edit in $EDITOR", "  r            run selected request or scenario", "  l            show last response (like logs)", "  Ctrl-w       toggle wide table columns", "", "Views and commands", "  :            command prompt (top, k9s-style)", "  :collections browse collections; :req :sc :env for the rest", "  Ctrl-a       show resource aliases", "  /            filter the current resource view", "  Tab/Ctrl-f/→ accept command suggestion", "  ↑/↓          choose command suggestion", "  Ctrl-u       clear command; Ctrl-w removes its last word", "  Ctrl-r       reload workspace", "  ?            this help", "  Ctrl-c, :q   quit (or cancel a running request)",
 	}, "\n")
 	if len(m.hotkeys) == 0 {
 		return help
@@ -975,12 +1110,6 @@ func (m *Model) aliasContent() string {
 
 func (m *Model) renderFooter(width int) string {
 	tabs := m.renderTabs(width)
-	if m.mode == filterMode {
-		return tabs + "\n" + lipgloss.NewStyle().Foreground(yellow).Width(width).Render(" /"+m.input+"   [enter] keep filter  [esc] cancel")
-	}
-	if m.mode == commandMode {
-		return tabs + "\n" + m.renderCommandFooter(width)
-	}
 	message := m.message
 	if message == "" {
 		message = "Ready"
@@ -1001,7 +1130,7 @@ func (m *Model) renderFooter(width int) string {
 
 func (m *Model) renderTabs(width int) string {
 	parts := []string{}
-	for _, view := range []section{requestsSection, scenariosSection, environmentsSection} {
+	for _, view := range []section{requestsSection, collectionsSection, scenariosSection, environmentsSection} {
 		label := " <" + view.String() + "> "
 		style := lipgloss.NewStyle().Foreground(muted)
 		if view == m.section {
@@ -1010,29 +1139,11 @@ func (m *Model) renderTabs(width int) string {
 		parts = append(parts, style.Render(label))
 	}
 	value := strings.Join(parts, "")
-	return lipgloss.NewStyle().Width(width).Render(value)
-}
-
-func (m *Model) renderCommandFooter(width int) string {
-	suggestions := m.suggestions()
-	lines := []string{}
-	if len(suggestions) > 0 {
-		start := 0
-		if m.suggestion >= 3 {
-			start = m.suggestion - 2
-		}
-		end := min(len(suggestions), start+3)
-		for index := start; index < end; index++ {
-			prefix := "  "
-			style := lipgloss.NewStyle().Foreground(muted)
-			if index == m.suggestion {
-				prefix, style = "› ", lipgloss.NewStyle().Foreground(green).Bold(true)
-			}
-			lines = append(lines, style.Render(prefix+suggestions[index].value+"  "+suggestions[index].description))
-		}
+	if m.section == requestsSection && m.scope != "" {
+		crumb := lipgloss.NewStyle().Foreground(muted).Render("  collections › " + m.scope)
+		value += crumb
 	}
-	lines = append(lines, ":"+m.input+"   [enter] execute  [tab] complete  [esc] cancel")
-	return lipgloss.NewStyle().Foreground(yellow).Width(width).Render(strings.Join(lines, "\n"))
+	return lipgloss.NewStyle().Width(width).Render(value)
 }
 
 func (m *Model) tableHeight() int { return max(1, m.height-5) }
@@ -1132,7 +1243,7 @@ func firstOr(value, fallback string) string {
 }
 
 func loadAliases(root string) (map[string]string, error) {
-	aliases := map[string]string{"requests": "requests", "request": "requests", "req": "requests", "r": "requests", "apis": "requests", "scenarios": "scenarios", "scenario": "scenarios", "sc": "scenarios", "environments": "environments", "environment": "environments", "env": "environments", "envs": "environments", "contexts": "environments"}
+	aliases := map[string]string{"requests": "requests", "request": "requests", "req": "requests", "r": "requests", "apis": "requests", "collections": "collections", "collection": "collections", "col": "collections", "cols": "collections", "scenarios": "scenarios", "scenario": "scenarios", "sc": "scenarios", "environments": "environments", "environment": "environments", "env": "environments", "envs": "environments", "contexts": "environments"}
 	for _, path := range interactionPaths(root, "aliases.yaml") {
 		data, err := os.ReadFile(path)
 		if os.IsNotExist(err) {
@@ -1149,7 +1260,7 @@ func loadAliases(root string) (map[string]string, error) {
 		}
 		for alias, target := range config.Aliases {
 			target = strings.ToLower(strings.TrimSpace(target))
-			if target != "requests" && target != "scenarios" && target != "environments" {
+			if target != "requests" && target != "collections" && target != "scenarios" && target != "environments" {
 				return nil, fmt.Errorf("alias %q targets unknown view %q", alias, target)
 			}
 			aliases[strings.ToLower(alias)] = target

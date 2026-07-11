@@ -7,12 +7,14 @@ const SchemaVersion = 1
 type Workspace struct {
 	Version      int               `yaml:"version"`
 	Name         string            `yaml:"name"`
+	Description  string            `yaml:"description,omitempty"`
 	DefaultEnv   string            `yaml:"defaultEnvironment,omitempty"`
 	Variables    map[string]string `yaml:"variables,omitempty"`
 	HTTP         HTTPOptions       `yaml:"http,omitempty"`
 	Path         string            `yaml:"-"`
 	Root         string            `yaml:"-"`
 	Requests     []Request         `yaml:"-"`
+	Collections  []Collection      `yaml:"-"`
 	Environments []Environment     `yaml:"-"`
 	Scenarios    []Scenario        `yaml:"-"`
 }
@@ -24,34 +26,50 @@ type HTTPOptions struct {
 }
 
 type Request struct {
-	Version int               `yaml:"version"`
-	Kind    string            `yaml:"kind"`
-	Name    string            `yaml:"name"`
-	ID      string            `yaml:"id,omitempty"`
-	Method  string            `yaml:"method"`
-	URL     string            `yaml:"url"`
-	Headers map[string]string `yaml:"headers,omitempty"`
-	Query   map[string]string `yaml:"query,omitempty"`
-	Body    any               `yaml:"body,omitempty"`
-	Timeout string            `yaml:"timeout,omitempty"`
-	Assert  []string          `yaml:"assert,omitempty"`
-	Extract map[string]string `yaml:"extract,omitempty"`
-	Path    string            `yaml:"-"`
+	Version     int               `yaml:"version"`
+	Kind        string            `yaml:"kind"`
+	Name        string            `yaml:"name"`
+	Description string            `yaml:"description,omitempty"`
+	ID          string            `yaml:"id,omitempty"`
+	Method      string            `yaml:"method"`
+	URL         string            `yaml:"url"`
+	Headers     map[string]string `yaml:"headers,omitempty"`
+	Query       map[string]string `yaml:"query,omitempty"`
+	Body        any               `yaml:"body,omitempty"`
+	Timeout     string            `yaml:"timeout,omitempty"`
+	Assert      []string          `yaml:"assert,omitempty"`
+	Extract     map[string]string `yaml:"extract,omitempty"`
+	Path        string            `yaml:"-"`
+	Collection  string            `yaml:"-"`
+}
+
+// Collection groups related requests. Every request belongs to a collection
+// derived from its folder under collections/; a collection.yaml marker file may
+// add a display name and description for humans and agents.
+type Collection struct {
+	Version     int    `yaml:"version"`
+	Kind        string `yaml:"kind"`
+	Name        string `yaml:"name"`
+	Description string `yaml:"description,omitempty"`
+	Path        string `yaml:"-"`
+	Dir         string `yaml:"-"`
 }
 
 type Environment struct {
-	Version   int               `yaml:"version"`
-	Kind      string            `yaml:"kind"`
-	Name      string            `yaml:"name"`
-	Variables map[string]string `yaml:"variables,omitempty"`
-	Secrets   map[string]string `yaml:"secrets,omitempty"`
-	Path      string            `yaml:"-"`
+	Version     int               `yaml:"version"`
+	Kind        string            `yaml:"kind"`
+	Name        string            `yaml:"name"`
+	Description string            `yaml:"description,omitempty"`
+	Variables   map[string]string `yaml:"variables,omitempty"`
+	Secrets     map[string]string `yaml:"secrets,omitempty"`
+	Path        string            `yaml:"-"`
 }
 
 type Scenario struct {
 	Version           int               `yaml:"version"`
 	Kind              string            `yaml:"kind"`
 	Name              string            `yaml:"name"`
+	Description       string            `yaml:"description,omitempty"`
 	ID                string            `yaml:"id,omitempty"`
 	Variables         map[string]string `yaml:"variables,omitempty"`
 	Steps             []ScenarioStep    `yaml:"steps"`
@@ -160,4 +178,23 @@ func (ws *Workspace) ScenarioByRef(ref string) (Scenario, bool) {
 		}
 	}
 	return Scenario{}, false
+}
+
+func (ws *Workspace) CollectionByName(name string) (Collection, bool) {
+	for _, collection := range ws.Collections {
+		if collection.Name == name {
+			return collection, true
+		}
+	}
+	return Collection{}, false
+}
+
+func (ws *Workspace) RequestsInCollection(name string) []Request {
+	var requests []Request
+	for _, request := range ws.Requests {
+		if request.Collection == name {
+			requests = append(requests, request)
+		}
+	}
+	return requests
 }
