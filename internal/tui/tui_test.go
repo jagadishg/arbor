@@ -77,7 +77,7 @@ func TestViewUsesResourceTableAndK9sHints(t *testing.T) {
 	m := testModel()
 	_, _ = m.Update(tea.WindowSizeMsg{Width: 110, Height: 32})
 	view := m.View().Content
-	for _, expected := range []string{"ARBOR", "arbor > Demo > requests", "NAME", "METHOD", "[ctrl-a] aliases"} {
+	for _, expected := range []string{"ARBOR Workspace: Demo", "requests(all)[2]", "NAME", "METHOD", "[ctrl-a] aliases"} {
 		if !strings.Contains(view, expected) {
 			t.Errorf("view missing %q", expected)
 		}

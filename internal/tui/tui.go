@@ -18,6 +18,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/jagadishg/arbor/internal/app"
+	"github.com/jagadishg/arbor/internal/buildinfo"
 	"github.com/jagadishg/arbor/internal/model"
 	"gopkg.in/yaml.v3"
 )
@@ -655,50 +656,75 @@ var (
 
 func (m *Model) render() string {
 	width, height := max(m.width, 50), max(m.height, 12)
-	header, crumbs, footer := m.renderHeader(width), m.renderCrumbs(width), m.renderFooter(width)
-	bodyHeight := max(1, height-lipgloss.Height(header)-lipgloss.Height(crumbs)-lipgloss.Height(footer))
+	header, footer := m.renderHeader(width), m.renderFooter(width)
+	bodyHeight := max(3, height-lipgloss.Height(header)-lipgloss.Height(footer))
 	if m.overlay != noOverlay {
-		return lipgloss.NewStyle().Foreground(foreground).Render(header + "\n" + crumbs + "\n" + m.renderOverlay(width, height-2))
+		return lipgloss.NewStyle().Foreground(foreground).Render(header + "\n" + m.renderOverlay(width, height-lipgloss.Height(header)))
 	}
 	body := m.renderTable(width, bodyHeight)
-	return lipgloss.NewStyle().Foreground(foreground).Render(header + "\n" + crumbs + "\n" + body + "\n" + footer)
+	return lipgloss.NewStyle().Foreground(foreground).Render(header + "\n" + body + "\n" + footer)
 }
 
 func (m *Model) renderHeader(width int) string {
-	brand := lipgloss.NewStyle().Bold(true).Foreground(green).Render(" ARBOR ")
-	context := lipgloss.NewStyle().Foreground(yellow).Render("context: " + firstOr(m.environment, "none"))
-	left := brand + "  " + lipgloss.NewStyle().Bold(true).Render(m.app.Workspace.Name)
-	return lipgloss.NewStyle().Background(panel).Width(width).Render(left + strings.Repeat(" ", max(1, width-lipgloss.Width(left)-lipgloss.Width(context)-2)) + context + " ")
-}
-
-func (m *Model) renderCrumbs(width int) string {
-	crumbs := " arbor > " + m.app.Workspace.Name + " > " + m.section.String()
-	if m.filter != "" {
-		crumbs += " /" + m.filter
+	if width < 78 {
+		return lipgloss.NewStyle().Background(panel).Width(width).Render(" ARBOR  workspace: " + truncate(m.app.Workspace.Name, max(10, width-30)) + "  context: " + firstOr(m.environment, "none"))
 	}
-	return lipgloss.NewStyle().Foreground(muted).Width(width).Render(crumbs)
+	leftWidth := max(34, width-34)
+	rows := []string{
+		"ARBOR Workspace: " + m.app.Workspace.Name,
+		"Root:      " + m.app.Workspace.Root,
+		"Context:   " + firstOr(m.environment, "none"),
+		fmt.Sprintf("Resources: %d requests · %d scenarios · %d environments", len(m.app.Workspace.Requests), len(m.app.Workspace.Scenarios), len(m.app.Workspace.Environments)),
+		"Arbor Rev: " + buildinfo.Version,
+	}
+	logo := []string{
+		"    _    ____  ____   ___  ____",
+		"   / \\  |  _ \\| __ ) / _ \\|  _ \\",
+		"  / _ \\ | |_) |  _ \\| | | | |_) |",
+		" / ___ \\|  _ <| |_) | |_| |  _ <",
+		"/_/   \\_\\_| \\_\\____/ \\___/|_| \\_\\",
+	}
+	lines := make([]string, 0, len(rows))
+	for index, row := range rows {
+		left := lipgloss.NewStyle().Foreground(yellow).Render(truncate(row, leftWidth))
+		right := lipgloss.NewStyle().Foreground(green).Bold(true).Render(logo[index])
+		lines = append(lines, left+strings.Repeat(" ", max(1, width-lipgloss.Width(left)-lipgloss.Width(right)))+right)
+	}
+	return lipgloss.NewStyle().Background(panel).Width(width).Render(strings.Join(lines, "\n"))
 }
 
 func (m *Model) renderTable(width, height int) string {
-	title := lipgloss.NewStyle().Bold(true).Foreground(blue).Render(" " + strings.ToUpper(m.section.String()))
-	if m.filter != "" {
-		title += lipgloss.NewStyle().Foreground(yellow).Render("  FILTER: " + m.filter)
-	}
 	items := m.items()
-	lines := []string{title, m.tableHeader(width)}
-	available := max(1, height-len(lines)-1)
+	inner := max(20, width-2)
+	scope := "all"
+	if m.filter != "" {
+		scope = "/" + m.filter
+	}
+	title := fmt.Sprintf("─ %s(%s)[%d] ", m.section.String(), scope, len(items))
+	top := "┌" + lipgloss.NewStyle().Foreground(blue).Bold(true).Render(title) + strings.Repeat("─", max(0, inner-lipgloss.Width(title))) + "┐"
+	lines := []string{top, m.frameLine(m.tableHeader(inner), inner)}
+	available := max(1, height-3)
 	start := 0
 	if m.selected >= available {
 		start = m.selected - available + 1
 	}
 	end := min(len(items), start+available)
 	for index := start; index < end; index++ {
-		lines = append(lines, m.tableRow(index, items[index], width))
+		lines = append(lines, m.frameLine(m.tableRow(index, items[index], inner), inner))
 	}
 	if len(items) == 0 {
-		lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render("  No resources match this view"))
+		lines = append(lines, m.frameLine(lipgloss.NewStyle().Foreground(muted).Render("  No resources match this view"), inner))
 	}
-	return lipgloss.NewStyle().Width(width).Height(height).Render(strings.Join(lines, "\n"))
+	for len(lines) < height-1 {
+		lines = append(lines, "│"+strings.Repeat(" ", inner)+"│")
+	}
+	lines = append(lines, "└"+strings.Repeat("─", inner)+"┘")
+	return strings.Join(lines, "\n")
+}
+
+func (m *Model) frameLine(value string, width int) string {
+	padding := max(0, width-lipgloss.Width(value))
+	return "│" + value + strings.Repeat(" ", padding) + "│"
 }
 
 func (m *Model) tableHeader(width int) string {
@@ -915,11 +941,12 @@ func (m *Model) aliasContent() string {
 }
 
 func (m *Model) renderFooter(width int) string {
+	tabs := m.renderTabs(width)
 	if m.mode == filterMode {
-		return lipgloss.NewStyle().Foreground(yellow).Width(width).Render(" /" + m.input + "   [enter] keep filter  [esc] cancel")
+		return tabs + "\n" + lipgloss.NewStyle().Foreground(yellow).Width(width).Render(" /"+m.input+"   [enter] keep filter  [esc] cancel")
 	}
 	if m.mode == commandMode {
-		return m.renderCommandFooter(width)
+		return tabs + "\n" + m.renderCommandFooter(width)
 	}
 	message := m.message
 	if message == "" {
@@ -932,11 +959,25 @@ func (m *Model) renderFooter(width int) string {
 	if width < 105 {
 		shortcuts = "[d] describe  [r] run  [/] filter  [:] command  [?] help"
 	}
-	if width < 78 {
-		shortcuts = "[d] describe  [r] run  [:] command  [?] help"
+	if width < 90 {
+		shortcuts = "[d]  [r]  [/]  [:]  [?]"
 	}
 	message = truncate(message, max(1, width-lipgloss.Width(shortcuts)-3))
-	return lipgloss.NewStyle().Foreground(muted).Width(width).Render(" " + message + strings.Repeat(" ", max(1, width-lipgloss.Width(message)-lipgloss.Width(shortcuts)-2)) + shortcuts)
+	return tabs + "\n" + lipgloss.NewStyle().Foreground(muted).Width(width).Render(" 😎 "+message+strings.Repeat(" ", max(1, width-lipgloss.Width(message)-lipgloss.Width(shortcuts)-4))+shortcuts)
+}
+
+func (m *Model) renderTabs(width int) string {
+	parts := []string{}
+	for _, view := range []section{requestsSection, scenariosSection, environmentsSection} {
+		label := " <" + view.String() + "> "
+		style := lipgloss.NewStyle().Foreground(muted)
+		if view == m.section {
+			style = lipgloss.NewStyle().Background(yellow).Foreground(lipgloss.Color("#1A1B26")).Bold(true)
+		}
+		parts = append(parts, style.Render(label))
+	}
+	value := strings.Join(parts, "")
+	return lipgloss.NewStyle().Width(width).Render(value)
 }
 
 func (m *Model) renderCommandFooter(width int) string {
