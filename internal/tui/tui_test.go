@@ -24,9 +24,26 @@ func TestK9sStyleResourceAliasAndHistory(t *testing.T) {
 	if m.section != scenariosSection {
 		t.Fatalf("section = %s", m.section)
 	}
-	_, _ = m.handleKey("esc")
+	_, _ = m.handleKey("q")
 	if m.section != requestsSection {
-		t.Fatalf("esc did not return to requests: %s", m.section)
+		t.Fatalf("q did not return to requests: %s", m.section)
+	}
+	_, _ = m.handleKey("]")
+	if m.section != scenariosSection {
+		t.Fatalf("] did not move forward: %s", m.section)
+	}
+}
+
+func TestWideViewAndK9sPagingKeys(t *testing.T) {
+	m := testModel()
+	_, _ = m.handleKey("ctrl+w")
+	if !m.wide || !strings.Contains(m.tableHeader(100), "FILE") {
+		t.Fatalf("wide view was not enabled")
+	}
+	m.height = 7
+	_, _ = m.handleKey("ctrl+f")
+	if m.selected == 0 {
+		t.Fatalf("ctrl-f did not page the list")
 	}
 }
 

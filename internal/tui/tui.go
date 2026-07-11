@@ -79,6 +79,8 @@ type Model struct {
 	selected    int
 	filter      string
 	history     []viewLocation
+	forward     []viewLocation
+	wide        bool
 
 	mode       inputMode
 	input      string
@@ -188,7 +190,7 @@ func (m *Model) handleKey(key string) (tea.Model, tea.Cmd) {
 		return m.executeCommand(binding.command)
 	}
 	switch key {
-	case "ctrl+c", "q":
+	case "ctrl+c":
 		return m, tea.Quit
 	case "j", "down":
 		m.move(1)
@@ -200,9 +202,9 @@ func (m *Model) handleKey(key string) (tea.Model, tea.Cmd) {
 		if count := len(m.items()); count > 0 {
 			m.selected = count - 1
 		}
-	case "ctrl+d", "pagedown":
+	case "ctrl+d", "ctrl+f", "pagedown":
 		m.move(max(1, m.tableHeight()/2))
-	case "ctrl+u", "pageup":
+	case "ctrl+u", "ctrl+b", "pageup":
 		m.move(-max(1, m.tableHeight()/2))
 	case "enter", "d":
 		m.overlay, m.overlayOffset = describeOverlay, 0
@@ -226,8 +228,17 @@ func (m *Model) handleKey(key string) (tea.Model, tea.Cmd) {
 		m.overlay, m.overlayOffset = helpOverlay, 0
 	case "ctrl+a":
 		m.overlay, m.overlayOffset = aliasOverlay, 0
-	case "esc", "h", "left":
+	case "q", "esc", "h", "left", "[":
 		m.goBack()
+	case "]", "right":
+		m.goForward()
+	case "ctrl+w":
+		m.wide = !m.wide
+		if m.wide {
+			m.message = "Wide view enabled"
+		} else {
+			m.message = "Wide view disabled"
+		}
 	case "ctrl+r":
 		m.message = "Reloading workspace…"
 		return m, m.reloadCmd()
@@ -397,6 +408,7 @@ func (m *Model) executeCommand(command string) (tea.Model, tea.Cmd) {
 func (m *Model) navigate(next section, filter string) {
 	if m.section != next || m.filter != filter {
 		m.history = append(m.history, viewLocation{m.section, m.filter, m.selected})
+		m.forward = nil
 	}
 	m.section, m.filter, m.selected = next, filter, 0
 	m.message = "Viewing " + next.String()
@@ -408,9 +420,22 @@ func (m *Model) goBack() {
 		return
 	}
 	last := m.history[len(m.history)-1]
+	m.forward = append(m.forward, viewLocation{m.section, m.filter, m.selected})
 	m.history = m.history[:len(m.history)-1]
 	m.section, m.filter, m.selected = last.section, last.filter, last.selected
 	m.message = "Back to " + m.section.String()
+}
+
+func (m *Model) goForward() {
+	if len(m.forward) == 0 {
+		m.message = "No forward view"
+		return
+	}
+	last := m.forward[len(m.forward)-1]
+	m.history = append(m.history, viewLocation{m.section, m.filter, m.selected})
+	m.forward = m.forward[:len(m.forward)-1]
+	m.section, m.filter, m.selected = last.section, last.filter, last.selected
+	m.message = "Forward to " + m.section.String()
 }
 
 func sectionFor(target string) section {
@@ -732,7 +757,11 @@ func (m *Model) tableHeader(width int) string {
 	switch m.section {
 	case requestsSection:
 		nameWidth, urlWidth := m.requestColumnWidths(width)
-		return style.Render(fmt.Sprintf("  %-*s %-8s %-*s %s", nameWidth, "NAME", "METHOD", urlWidth, "URL", "A"))
+		line := fmt.Sprintf("  %-*s %-8s %-*s %s", nameWidth, "NAME", "METHOD", urlWidth, "URL", "A")
+		if m.wide {
+			line += " FILE"
+		}
+		return style.Render(line)
 	case scenariosSection:
 		nameWidth := max(18, width-24)
 		return style.Render(fmt.Sprintf("  %-*s %-8s %s", nameWidth, "NAME", "STEPS", "ON FAILURE"))
@@ -750,7 +779,11 @@ func (m *Model) tableRow(index int, item item, width int) string {
 	switch value := item.value.(type) {
 	case model.Request:
 		nameWidth, urlWidth := m.requestColumnWidths(width)
-		return style.Render(fmt.Sprintf("%s%-*s %-8s %-*s %d", prefix, nameWidth, truncate(value.Ref(), nameWidth), methodStyle(value.Method).Render(strings.ToUpper(value.Method)), urlWidth, truncate(value.URL, urlWidth), len(value.Assert)))
+		line := fmt.Sprintf("%s%-*s %-8s %-*s %d", prefix, nameWidth, truncate(value.Ref(), nameWidth), methodStyle(value.Method).Render(strings.ToUpper(value.Method)), urlWidth, truncate(value.URL, urlWidth), len(value.Assert))
+		if m.wide {
+			line += " " + truncate(relative(m.app.Workspace.Root, value.Path), 18)
+		}
+		return style.Render(line)
 	case model.Scenario:
 		mode := "STOP"
 		if value.ContinueOnFailure {
@@ -919,7 +952,7 @@ func (m *Model) responseContent(width int) string {
 
 func (m *Model) helpContent() string {
 	help := strings.Join([]string{
-		"Navigation", "  j/k, ↑/↓     move selection", "  g/G          first/last resource", "  Ctrl-d/u     page down/up", "  Esc or h     return to the previous view", "", "Resource actions", "  Enter, d     describe selected resource", "  y            show YAML", "  e            edit in $EDITOR", "  r            run selected request or scenario", "  l            show last response (like logs)", "", "Views and commands", "  :            command mode", "  Ctrl-a       show resource aliases", "  /            filter the current resource view", "  Tab/Ctrl-f/→ accept command suggestion", "  ↑/↓          choose command suggestion", "  Ctrl-u       clear command; Ctrl-w removes its last word", "  Ctrl-r       reload workspace", "  ?            this help", "  Ctrl-c, q    quit (or cancel a running request)",
+		"Navigation", "  j/k, ↑/↓     move selection", "  g/G          first/last resource", "  Ctrl-f/b     page down/up", "  Esc, q, h, [ back through view history", "  ], →         forward through view history", "", "Resource actions", "  Enter, d     describe selected resource", "  y            show YAML", "  e            edit in $EDITOR", "  r            run selected request or scenario", "  l            show last response (like logs)", "  Ctrl-w       toggle wide table columns", "", "Views and commands", "  :            command mode", "  Ctrl-a       show resource aliases", "  /            filter the current resource view", "  Tab/Ctrl-f/→ accept command suggestion", "  ↑/↓          choose command suggestion", "  Ctrl-u       clear command; Ctrl-w removes its last word", "  Ctrl-r       reload workspace", "  ?            this help", "  Ctrl-c, :q   quit (or cancel a running request)",
 	}, "\n")
 	if len(m.hotkeys) == 0 {
 		return help
@@ -1006,7 +1039,11 @@ func (m *Model) tableHeight() int { return max(1, m.height-5) }
 func (m *Model) modalHeight() int { return min(max(10, m.height-6), m.height-4) }
 func (m *Model) requestColumnWidths(width int) (int, int) {
 	nameWidth := min(28, max(16, width/3))
-	return nameWidth, max(12, width-nameWidth-14)
+	reserved := 14
+	if m.wide {
+		reserved += 19
+	}
+	return nameWidth, max(12, width-nameWidth-reserved)
 }
 func methodStyle(method string) lipgloss.Style {
 	color := blue

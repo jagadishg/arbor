@@ -58,7 +58,7 @@ Inside Arbor:
 - `y` shows the source YAML and `e` opens it in `$EDITOR`.
 - `:` opens an alias-aware command prompt; `Tab`, `Ctrl-f`, or `→` accepts a suggestion.
 - `Ctrl-a` lists resource aliases; `Esc` or `h` returns to the previous view.
-- `/` filters the current resource view incrementally; `?` shows help; `q` quits.
+- `/` filters the current resource view incrementally; `?` shows help; `q` or `Esc` goes back; `Ctrl-c` quits.
 
 Run the included example without opening the TUI:
 
