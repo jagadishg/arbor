@@ -174,10 +174,31 @@ func Validate(ws *model.Workspace) []error {
 			errs = append(errs, ValidationError{Path: env.Path, Message: fmt.Sprintf("duplicate environment %q (also in %s)", env.Name, previous)})
 		}
 		seenEnvs[env.Name] = env.Path
+		for name, reference := range env.Secrets {
+			if !strings.HasPrefix(reference, "env://") && !strings.HasPrefix(reference, "keychain://") {
+				errs = append(errs, ValidationError{Path: env.Path, Message: fmt.Sprintf("secret %q must use env:// or keychain://", name)})
+			}
+		}
 	}
 	if ws.DefaultEnv != "" {
 		if _, ok := seenEnvs[ws.DefaultEnv]; !ok {
 			errs = append(errs, ValidationError{Path: ws.Path, Message: fmt.Sprintf("default environment %q does not exist", ws.DefaultEnv)})
+		}
+	}
+	seenScenarios := map[string]string{}
+	for _, scenario := range ws.Scenarios {
+		if scenario.Version != model.SchemaVersion || scenario.Name == "" || len(scenario.Steps) == 0 {
+			errs = append(errs, ValidationError{Path: scenario.Path, Message: "version 1, name, and at least one step are required"})
+		}
+		ref := scenario.Ref()
+		if previous, ok := seenScenarios[ref]; ok {
+			errs = append(errs, ValidationError{Path: scenario.Path, Message: fmt.Sprintf("duplicate scenario reference %q (also in %s)", ref, previous)})
+		}
+		seenScenarios[ref] = scenario.Path
+		for index, step := range scenario.Steps {
+			if _, ok := seenRequests[step.Request]; !ok {
+				errs = append(errs, ValidationError{Path: scenario.Path, Message: fmt.Sprintf("step %d references unknown request %q", index+1, step.Request)})
+			}
 		}
 	}
 	sort.Slice(errs, func(i, j int) bool { return errs[i].Error() < errs[j].Error() })

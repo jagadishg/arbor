@@ -1,6 +1,6 @@
 module github.com/jagadishg/arbor
 
-go 1.24.2
+go 1.25.0
 
 require gopkg.in/yaml.v3 v3.0.1
 
@@ -10,6 +10,7 @@ require (
 	charm.land/bubbletea/v2 v2.0.0
 	charm.land/lipgloss/v2 v2.0.0
 	github.com/spf13/cobra v1.10.1
+	golang.org/x/term v0.45.0
 )
 
 require (
@@ -32,5 +33,5 @@ require (
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/sync v0.19.0 // indirect
-	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 )
