@@ -361,8 +361,13 @@ func (m *Model) executeCommand(command string) (tea.Model, tea.Cmd) {
 	case "reload":
 		return m, m.reloadCmd()
 	case "use", "context", "ctx":
+		if len(fields) == 1 && (verb == "context" || verb == "ctx") {
+			m.navigate(environmentsSection, "")
+			m.message = "Select an environment and press r to set context"
+			return m, nil
+		}
 		if len(fields) != 2 {
-			m.message = "Usage: :use <environment>"
+			m.message = "Usage: :use <environment> or :ctx <environment>"
 			return m, nil
 		}
 		if _, ok := m.app.Workspace.EnvironmentByName(fields[1]); !ok {
@@ -1049,7 +1054,7 @@ func firstOr(value, fallback string) string {
 }
 
 func loadAliases(root string) (map[string]string, error) {
-	aliases := map[string]string{"requests": "requests", "request": "requests", "req": "requests", "r": "requests", "apis": "requests", "scenarios": "scenarios", "scenario": "scenarios", "sc": "scenarios", "environments": "environments", "environment": "environments", "env": "environments", "envs": "environments"}
+	aliases := map[string]string{"requests": "requests", "request": "requests", "req": "requests", "r": "requests", "apis": "requests", "scenarios": "scenarios", "scenario": "scenarios", "sc": "scenarios", "environments": "environments", "environment": "environments", "env": "environments", "envs": "environments", "contexts": "environments"}
 	for _, path := range interactionPaths(root, "aliases.yaml") {
 		data, err := os.ReadFile(path)
 		if os.IsNotExist(err) {

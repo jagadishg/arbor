@@ -30,6 +30,20 @@ func TestK9sStyleResourceAliasAndHistory(t *testing.T) {
 	}
 }
 
+func TestResourceCommandCanSetFilterAndContextView(t *testing.T) {
+	m := testModel()
+	m.mode, m.input = commandMode, "req /create"
+	_, _ = m.handleKey("enter")
+	if m.section != requestsSection || m.filter != "create" || len(m.items()) != 1 {
+		t.Fatalf("unexpected resource filter state: %s /%s (%d items)", m.section, m.filter, len(m.items()))
+	}
+	m.mode, m.input = commandMode, "ctx"
+	_, _ = m.handleKey("enter")
+	if m.section != environmentsSection {
+		t.Fatalf("ctx did not open environments: %s", m.section)
+	}
+}
+
 func TestCommandCompletion(t *testing.T) {
 	m := testModel()
 	m.mode, m.input = commandMode, "req"

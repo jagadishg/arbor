@@ -220,7 +220,8 @@ Use `--json` with `arbor run` for machine-readable output.
                           Open scenarios
 :environments, :env       Open environments
 :use staging              Switch environment
-:ctx staging              Switch environment (k9s-style context command)
+:ctx                      Open environments (k9s-style context view)
+:ctx staging              Switch environment directly
 :run users.get            Run a request by reference
 :run auth.smoke           Run a scenario by reference
 :aliases                  Show all resource aliases
