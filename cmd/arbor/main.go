@@ -6,11 +6,12 @@ import (
 	"os"
 
 	"github.com/jagadishg/arbor/internal/cli"
+	"github.com/jagadishg/arbor/internal/tui"
 )
 
 func main() {
-	command := cli.New(cli.Options{RunTUI: func(context.Context, string, string) error {
-		return fmt.Errorf("interactive mode is not available in this build yet; use arbor --help")
+	command := cli.New(cli.Options{RunTUI: func(ctx context.Context, directory, environment string) error {
+		return tui.Run(ctx, directory, environment)
 	}})
 	if err := command.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "arbor:", err)
