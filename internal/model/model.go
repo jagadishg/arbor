@@ -49,13 +49,14 @@ type Environment struct {
 }
 
 type Scenario struct {
-	Version   int               `yaml:"version"`
-	Kind      string            `yaml:"kind"`
-	Name      string            `yaml:"name"`
-	ID        string            `yaml:"id,omitempty"`
-	Variables map[string]string `yaml:"variables,omitempty"`
-	Steps     []ScenarioStep    `yaml:"steps"`
-	Path      string            `yaml:"-"`
+	Version           int               `yaml:"version"`
+	Kind              string            `yaml:"kind"`
+	Name              string            `yaml:"name"`
+	ID                string            `yaml:"id,omitempty"`
+	Variables         map[string]string `yaml:"variables,omitempty"`
+	Steps             []ScenarioStep    `yaml:"steps"`
+	ContinueOnFailure bool              `yaml:"continueOnFailure,omitempty"`
+	Path              string            `yaml:"-"`
 }
 
 type ScenarioStep struct {
@@ -73,6 +74,51 @@ type Response struct {
 	Duration   time.Duration
 	Size       int64
 	URL        string
+}
+
+type AssertionResult struct {
+	Expression string
+	Passed     bool
+	Message    string
+}
+
+type RequestResult struct {
+	Request    Request
+	Response   *Response
+	Assertions []AssertionResult
+	Extracted  map[string]string
+	Error      error
+}
+
+func (r RequestResult) Passed() bool {
+	if r.Error != nil || r.Response == nil {
+		return false
+	}
+	for _, assertion := range r.Assertions {
+		if !assertion.Passed {
+			return false
+		}
+	}
+	return true
+}
+
+type ScenarioReport struct {
+	Scenario Scenario
+	Steps    []RequestResult
+	Started  time.Time
+	Duration time.Duration
+}
+
+func (r ScenarioReport) Passed() bool {
+	if len(r.Steps) != len(r.Scenario.Steps) {
+		return false
+	}
+	for _, step := range r.Steps {
+		if !step.Passed() {
+			return false
+		}
+	}
+	return true
 }
 
 func (r Request) Ref() string {
