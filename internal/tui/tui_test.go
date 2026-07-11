@@ -100,3 +100,32 @@ func TestWorkspaceAliasesExtendBuiltIns(t *testing.T) {
 		t.Fatalf("unexpected aliases: %#v", aliases)
 	}
 }
+
+func TestWorkspaceHotkeys(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, ".arbor", "hotkeys.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	contents := "hotKeys:\n  shift-0:\n    shortCut: Shift-0\n    description: Open requests\n    command: requests\n"
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hotkeys, err := loadHotkeys(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hotkeys["shift+0"].command != "requests" {
+		t.Fatalf("unexpected hotkeys: %#v", hotkeys)
+	}
+}
+
+func TestConfiguredHotkeyExecutesCommand(t *testing.T) {
+	m := testModel()
+	m.section = scenariosSection
+	m.hotkeys = map[string]hotkey{"shift+0": {description: "Open requests", command: "requests"}}
+	_, _ = m.handleKey("shift+0")
+	if m.section != requestsSection {
+		t.Fatalf("hotkey did not navigate: %s", m.section)
+	}
+}

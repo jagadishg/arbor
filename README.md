@@ -244,6 +244,21 @@ aliases:
 
 Aliases intentionally target resource views, keeping command navigation as predictable as k9s while the workspace remains fully local and shareable.
 
+Arbor follows k9s's global-plus-contextual convention for aliases and hotkeys. It loads user-wide files from your operating system configuration directory (`$XDG_CONFIG_HOME/arbor` on Linux, the standard application-config directory on macOS and Windows), then lets `.arbor/` files in the workspace override them.
+
+```yaml
+# .arbor/hotkeys.yaml
+hotKeys:
+  shift-0:
+    shortCut: Shift-0
+    description: Open requests
+    command: requests
+  shift-1:
+    shortCut: Shift-1
+    description: Open scenarios
+    command: scenarios
+```
+
 ## Development
 
 ```bash

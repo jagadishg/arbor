@@ -64,6 +64,7 @@ type scenarioDoneMsg model.ScenarioReport
 type reloadDoneMsg struct {
 	app     *app.App
 	aliases map[string]string
+	hotkeys map[string]hotkey
 	err     error
 }
 type editorDoneMsg struct{ err error }
@@ -93,11 +94,17 @@ type Model struct {
 	scenarioReport *model.ScenarioReport
 	message        string
 	aliases        map[string]string
+	hotkeys        map[string]hotkey
 }
 
 type suggestion struct {
 	value       string
 	description string
+}
+
+type hotkey struct {
+	description string
+	command     string
 }
 
 func Run(ctx context.Context, directory, environment string) error {
@@ -115,7 +122,8 @@ func Run(ctx context.Context, directory, environment string) error {
 
 func NewModel(ctx context.Context, directory, environment string, loaded *app.App) *Model {
 	aliases, _ := loadAliases(loaded.Workspace.Root)
-	return &Model{ctx: ctx, dir: directory, app: loaded, environment: environment, aliases: aliases, width: 100, height: 30}
+	hotkeys, _ := loadHotkeys(loaded.Workspace.Root)
+	return &Model{ctx: ctx, dir: directory, app: loaded, environment: environment, aliases: aliases, hotkeys: hotkeys, width: 100, height: 30}
 }
 
 func (m *Model) Init() tea.Cmd { return nil }
@@ -146,7 +154,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.message = "Reload failed: " + msg.err.Error()
 		} else {
-			m.app, m.aliases, m.selected = msg.app, msg.aliases, 0
+			m.app, m.aliases, m.hotkeys, m.selected = msg.app, msg.aliases, msg.hotkeys, 0
 			m.message = "Workspace reloaded"
 		}
 	case editorDoneMsg:
@@ -174,6 +182,9 @@ func (m *Model) handleKey(key string) (tea.Model, tea.Cmd) {
 		}
 		m.message = "Cancelling request…"
 		return m, nil
+	}
+	if binding, ok := m.hotkeys[normalizeKey(key)]; ok {
+		return m.executeCommand(binding.command)
 	}
 	switch key {
 	case "ctrl+c", "q":
@@ -463,7 +474,11 @@ func (m *Model) reloadCmd() tea.Cmd {
 		if aliasErr != nil {
 			return reloadDoneMsg{err: aliasErr}
 		}
-		return reloadDoneMsg{app: loaded, aliases: aliases}
+		hotkeys, hotkeyErr := loadHotkeys(loaded.Workspace.Root)
+		if hotkeyErr != nil {
+			return reloadDoneMsg{err: hotkeyErr}
+		}
+		return reloadDoneMsg{app: loaded, aliases: aliases, hotkeys: hotkeys}
 	}
 }
 
@@ -872,9 +887,17 @@ func (m *Model) responseContent(width int) string {
 }
 
 func (m *Model) helpContent() string {
-	return strings.Join([]string{
+	help := strings.Join([]string{
 		"Navigation", "  j/k, ↑/↓     move selection", "  g/G          first/last resource", "  Ctrl-d/u     page down/up", "  Esc or h     return to the previous view", "", "Resource actions", "  Enter, d     describe selected resource", "  y            show YAML", "  e            edit in $EDITOR", "  r            run selected request or scenario", "  l            show last response (like logs)", "", "Views and commands", "  :            command mode", "  Ctrl-a       show resource aliases", "  /            filter the current resource view", "  Tab/Ctrl-f/→ accept command suggestion", "  ↑/↓          choose command suggestion", "  Ctrl-u       clear command; Ctrl-w removes its last word", "  Ctrl-r       reload workspace", "  ?            this help", "  Ctrl-c, q    quit (or cancel a running request)",
 	}, "\n")
+	if len(m.hotkeys) == 0 {
+		return help
+	}
+	lines := []string{help, "", "Configured hotkeys"}
+	for _, key := range sortedKeys(m.hotkeys) {
+		lines = append(lines, "  "+key+"  "+m.hotkeys[key].description)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m *Model) aliasContent() string {
@@ -913,13 +936,24 @@ func (m *Model) renderFooter(width int) string {
 
 func (m *Model) renderCommandFooter(width int) string {
 	suggestions := m.suggestions()
-	hint := "[enter] execute  [tab] complete  [esc] cancel"
+	lines := []string{}
 	if len(suggestions) > 0 {
-		index := min(m.suggestion, len(suggestions)-1)
-		current := suggestions[index]
-		hint = "[" + current.value + "] " + current.description + "  [tab] complete"
+		start := 0
+		if m.suggestion >= 3 {
+			start = m.suggestion - 2
+		}
+		end := min(len(suggestions), start+3)
+		for index := start; index < end; index++ {
+			prefix := "  "
+			style := lipgloss.NewStyle().Foreground(muted)
+			if index == m.suggestion {
+				prefix, style = "› ", lipgloss.NewStyle().Foreground(green).Bold(true)
+			}
+			lines = append(lines, style.Render(prefix+suggestions[index].value+"  "+suggestions[index].description))
+		}
 	}
-	return lipgloss.NewStyle().Foreground(yellow).Width(width).Render(" :" + m.input + "\n " + truncate(hint, width-2))
+	lines = append(lines, ":"+m.input+"   [enter] execute  [tab] complete  [esc] cancel")
+	return lipgloss.NewStyle().Foreground(yellow).Width(width).Render(strings.Join(lines, "\n"))
 }
 
 func (m *Model) tableHeight() int { return max(1, m.height-5) }
@@ -998,8 +1032,15 @@ func trimRune(value string) string {
 	}
 	return string(runes[:len(runes)-1])
 }
-func trimWord(value string) string { return strings.TrimRight(strings.TrimRight(value, " \t"), "^ \t") }
-func isTextKey(key string) bool    { return len([]rune(key)) == 1 }
+func trimWord(value string) string {
+	value = strings.TrimRight(value, " \t")
+	index := strings.LastIndexAny(value, " \t")
+	if index < 0 {
+		return ""
+	}
+	return strings.TrimRight(value[:index+1], " \t")
+}
+func isTextKey(key string) bool { return len([]rune(key)) == 1 }
 func firstOr(value, fallback string) string {
 	if value == "" {
 		return fallback
@@ -1009,26 +1050,71 @@ func firstOr(value, fallback string) string {
 
 func loadAliases(root string) (map[string]string, error) {
 	aliases := map[string]string{"requests": "requests", "request": "requests", "req": "requests", "r": "requests", "apis": "requests", "scenarios": "scenarios", "scenario": "scenarios", "sc": "scenarios", "environments": "environments", "environment": "environments", "env": "environments", "envs": "environments"}
-	path := filepath.Join(root, ".arbor", "aliases.yaml")
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return aliases, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var config struct {
-		Aliases map[string]string `yaml:"aliases"`
-	}
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("read aliases: %w", err)
-	}
-	for alias, target := range config.Aliases {
-		target = strings.ToLower(strings.TrimSpace(target))
-		if target != "requests" && target != "scenarios" && target != "environments" {
-			return nil, fmt.Errorf("alias %q targets unknown view %q", alias, target)
+	for _, path := range interactionPaths(root, "aliases.yaml") {
+		data, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			continue
 		}
-		aliases[strings.ToLower(alias)] = target
+		if err != nil {
+			return nil, err
+		}
+		var config struct {
+			Aliases map[string]string `yaml:"aliases"`
+		}
+		if err := yaml.Unmarshal(data, &config); err != nil {
+			return nil, fmt.Errorf("read aliases: %w", err)
+		}
+		for alias, target := range config.Aliases {
+			target = strings.ToLower(strings.TrimSpace(target))
+			if target != "requests" && target != "scenarios" && target != "environments" {
+				return nil, fmt.Errorf("alias %q targets unknown view %q", alias, target)
+			}
+			aliases[strings.ToLower(alias)] = target
+		}
 	}
 	return aliases, nil
+}
+
+func loadHotkeys(root string) (map[string]hotkey, error) {
+	bindings := map[string]hotkey{}
+	for _, path := range interactionPaths(root, "hotkeys.yaml") {
+		data, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		var config struct {
+			HotKeys map[string]struct {
+				ShortCut    string `yaml:"shortCut"`
+				Description string `yaml:"description"`
+				Command     string `yaml:"command"`
+			} `yaml:"hotKeys"`
+		}
+		if err := yaml.Unmarshal(data, &config); err != nil {
+			return nil, fmt.Errorf("read hotkeys: %w", err)
+		}
+		for name, definition := range config.HotKeys {
+			key := normalizeKey(firstOr(definition.ShortCut, name))
+			if key == "" || strings.TrimSpace(definition.Command) == "" {
+				return nil, fmt.Errorf("hotkey %q requires shortCut and command", name)
+			}
+			bindings[key] = hotkey{description: firstOr(definition.Description, definition.Command), command: definition.Command}
+		}
+	}
+	return bindings, nil
+}
+
+func interactionPaths(root, file string) []string {
+	paths := []string{}
+	if config, err := os.UserConfigDir(); err == nil {
+		paths = append(paths, filepath.Join(config, "arbor", file))
+	}
+	return append(paths, filepath.Join(root, ".arbor", file))
+}
+
+func normalizeKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	return strings.ReplaceAll(value, "-", "+")
 }
