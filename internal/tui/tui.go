@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -733,6 +734,7 @@ var (
 	blue               = lipgloss.Color("#7AA2F7")
 	yellow             = lipgloss.Color("#E0AF68")
 	red                = lipgloss.Color("#F7768E")
+	purple             = lipgloss.Color("#BB9AF7")
 	muted              = lipgloss.Color("#707A8C")
 	panel              = lipgloss.Color("#24283B")
 	selectedBackground = lipgloss.Color("#364A82")
@@ -942,8 +944,12 @@ func (m *Model) renderOverlay(width, height int) string {
 	end := min(len(allLines), m.overlayOffset+available)
 
 	lines := []string{top}
+	styleLine := func(value string) string { return value }
+	if m.overlay == yamlOverlay {
+		styleLine = highlightYAMLLine
+	}
 	for index := m.overlayOffset; index < end; index++ {
-		lines = append(lines, m.frameLine(" "+allLines[index], inner))
+		lines = append(lines, m.frameLine(" "+styleLine(allLines[index]), inner))
 	}
 	for len(lines) < height-2 {
 		lines = append(lines, m.frameLine("", inner))
@@ -1198,6 +1204,67 @@ func methodStyle(method string) lipgloss.Style {
 	}
 	return lipgloss.NewStyle().Bold(true).Foreground(color)
 }
+
+// highlightYAMLLine applies k9s-style syntax colouring to a single YAML line:
+// comments, keys, and scalar values (strings, numbers, booleans/null) each get
+// their own colour. It is applied after wrapping so it only ever adds ANSI.
+func highlightYAMLLine(line string) string {
+	trimmed := strings.TrimLeft(line, " ")
+	indent := line[:len(line)-len(trimmed)]
+	if trimmed == "" {
+		return line
+	}
+	if strings.HasPrefix(trimmed, "#") {
+		return indent + lipgloss.NewStyle().Foreground(muted).Italic(true).Render(trimmed)
+	}
+	prefix := ""
+	rest := trimmed
+	for strings.HasPrefix(rest, "- ") {
+		prefix += "- "
+		rest = rest[2:]
+	}
+	if idx := strings.Index(rest, ":"); idx > 0 && (idx+1 == len(rest) || rest[idx+1] == ' ') && isYAMLKey(rest[:idx]) {
+		key := lipgloss.NewStyle().Foreground(blue).Render(rest[:idx]) + ":"
+		return indent + prefix + key + highlightYAMLValue(rest[idx+1:])
+	}
+	return indent + prefix + highlightYAMLValue(rest)
+}
+
+func highlightYAMLValue(value string) string {
+	lead := value[:len(value)-len(strings.TrimLeft(value, " "))]
+	scalar := strings.TrimLeft(value, " ")
+	if scalar == "" {
+		return value
+	}
+	var style lipgloss.Style
+	switch {
+	case scalar == "true" || scalar == "false" || scalar == "null" || scalar == "~":
+		style = lipgloss.NewStyle().Foreground(purple)
+	case isNumber(scalar):
+		style = lipgloss.NewStyle().Foreground(yellow)
+	default:
+		style = lipgloss.NewStyle().Foreground(green)
+	}
+	return lead + style.Render(scalar)
+}
+
+func isYAMLKey(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if !(r >= 'a' && r <= 'z') && !(r >= 'A' && r <= 'Z') && !(r >= '0' && r <= '9') && r != '_' && r != '-' && r != '.' {
+			return false
+		}
+	}
+	return true
+}
+
+func isNumber(value string) bool {
+	_, err := strconv.ParseFloat(value, 64)
+	return err == nil
+}
+
 func formatBody(body []byte, width int) string {
 	var value any
 	if json.Unmarshal(body, &value) == nil {

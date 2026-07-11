@@ -212,3 +212,18 @@ func TestCommandAndFilterPromptRenderAtTop(t *testing.T) {
 		t.Fatalf("filter prompt not rendered at top: %q", view)
 	}
 }
+
+func TestYAMLHighlighting(t *testing.T) {
+	for _, line := range []string{"name: Demo", "version: 1", "# a comment", "  - status == 200"} {
+		if out := highlightYAMLLine(line); !strings.Contains(out, "\x1b[") {
+			t.Errorf("expected %q to be colourised, got %q", line, out)
+		}
+	}
+	// A wrapped URL fragment must not be mistaken for a key/value split.
+	if got := highlightYAMLLine("https://example.com/users/1"); !strings.Contains(got, "https://example.com/users/1") {
+		t.Errorf("url fragment mangled: %q", got)
+	}
+	if isNumber("10s") || !isNumber("42") {
+		t.Fatal("isNumber classification wrong")
+	}
+}
