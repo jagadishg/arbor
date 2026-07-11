@@ -758,33 +758,32 @@ func (m *Model) render() string {
 	return lipgloss.NewStyle().Foreground(foreground).Render(sections)
 }
 
-// renderPrompt draws the k9s-style command or filter prompt directly beneath the
-// header, with the autocomplete list below it in command mode.
+// renderPrompt draws the k9s-style command or filter prompt in its own bordered
+// box directly beneath the header. Command mode shows the top completion inline
+// as dim ghost text after the cursor (k9s completes in place; it has no dropdown).
 func (m *Model) renderPrompt(width int) string {
+	inner := max(20, width-2)
+	glyph, accent := ">", blue
 	if m.mode == filterMode {
-		bar := lipgloss.NewStyle().Background(red).Foreground(lipgloss.Color("#1A1B26")).Bold(true).Width(width).Render(" 🔍 " + m.input + "▊")
-		hint := lipgloss.NewStyle().Foreground(muted).Render("  incremental filter  [enter] keep  [esc] cancel")
-		return bar + "\n" + hint
+		glyph, accent = "/", red
 	}
-	bar := lipgloss.NewStyle().Background(panel).Foreground(green).Bold(true).Width(width).Render(" ❯ " + m.input + "▊")
-	lines := []string{bar}
-	suggestions := m.suggestions()
-	if len(suggestions) > 0 {
-		start := 0
-		if m.suggestion >= 5 {
-			start = m.suggestion - 4
-		}
-		end := min(len(suggestions), start+5)
-		for index := start; index < end; index++ {
-			prefix, style := "  ", lipgloss.NewStyle().Foreground(muted)
-			if index == m.suggestion {
-				prefix, style = "› ", lipgloss.NewStyle().Foreground(green).Bold(true)
+	content := " " + lipgloss.NewStyle().Foreground(accent).Bold(true).Render(glyph) + " " + m.input + "▊"
+	if m.mode == commandMode {
+		if suggestions := m.suggestions(); len(suggestions) > 0 {
+			index := m.suggestion
+			if index < 0 || index >= len(suggestions) {
+				index = 0
 			}
-			lines = append(lines, style.Render(prefix+suggestions[index].value+"  "+suggestions[index].description))
+			if remainder := strings.TrimPrefix(suggestions[index].value, strings.ToLower(m.input)); remainder != suggestions[index].value {
+				content += lipgloss.NewStyle().Foreground(muted).Render(remainder)
+			}
 		}
 	}
-	lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render("  [enter] execute  [tab] complete  [esc] cancel"))
-	return strings.Join(lines, "\n")
+	border := lipgloss.NewStyle().Foreground(accent)
+	top := border.Render("┌" + strings.Repeat("─", inner) + "┐")
+	mid := border.Render("│") + content + strings.Repeat(" ", max(0, inner-lipgloss.Width(content))) + border.Render("│")
+	bottom := border.Render("└" + strings.Repeat("─", inner) + "┘")
+	return top + "\n" + mid + "\n" + bottom
 }
 
 func (m *Model) renderHeader(width int) string {
@@ -911,21 +910,52 @@ func (m *Model) tableRow(index int, item item, width int) string {
 	return ""
 }
 
+// renderOverlay draws describe/YAML/response/help panels as a full-width framed
+// pane (like k9s), filling the area beneath the header. Content is wrapped to the
+// interior width and each line is framed to an exact width so borders stay aligned.
 func (m *Model) renderOverlay(width, height int) string {
-	title, content := m.overlayContent(width - 10)
-	modalWidth, modalHeight := min(max(50, width-12), width-4), min(max(10, height-6), height-4)
-	lines := strings.Split(content, "\n")
-	visibleHeight := max(1, modalHeight-4)
-	if m.overlayOffset > max(0, len(lines)-visibleHeight) {
-		m.overlayOffset = max(0, len(lines)-visibleHeight)
+	inner := max(20, width-2)
+	height = max(6, height)
+	title, content := m.overlayContent(inner - 2)
+	content = wrap(content, inner-2)
+
+	titleText := fmt.Sprintf("─ %s ", title)
+	top := "┌" + lipgloss.NewStyle().Foreground(blue).Bold(true).Render(titleText) + strings.Repeat("─", max(0, inner-lipgloss.Width(titleText))) + "┐"
+
+	hint := "[esc] close  [j/k] scroll"
+	switch m.overlay {
+	case describeOverlay, yamlOverlay:
+		hint += "  [e] edit  [r] run"
+	case responseOverlay:
+		hint += "  [r] run again"
 	}
-	end := min(len(lines), m.overlayOffset+visibleHeight)
-	content = strings.Join(lines[m.overlayOffset:end], "\n")
-	header := lipgloss.NewStyle().Bold(true).Foreground(blue).Render(title)
-	footer := lipgloss.NewStyle().Foreground(muted).Render("[esc] close  [j/k] scroll  [r] run  [e] edit")
-	box := lipgloss.NewStyle().Width(modalWidth).Height(modalHeight).Padding(1, 2).Border(lipgloss.RoundedBorder()).BorderForeground(blue).Background(panel).Render(header + "\n\n" + content + "\n\n" + footer)
-	left, top := max(0, (width-lipgloss.Width(box))/2), max(0, (height-lipgloss.Height(box))/2)
-	return strings.Repeat("\n", top) + strings.Repeat(" ", left) + box
+
+	allLines := strings.Split(content, "\n")
+	available := max(1, height-3) // top border, footer line, bottom border
+	maxOffset := max(0, len(allLines)-available)
+	if m.overlayOffset > maxOffset {
+		m.overlayOffset = maxOffset
+	}
+	if m.overlayOffset < 0 {
+		m.overlayOffset = 0
+	}
+	end := min(len(allLines), m.overlayOffset+available)
+
+	lines := []string{top}
+	for index := m.overlayOffset; index < end; index++ {
+		lines = append(lines, m.frameLine(" "+allLines[index], inner))
+	}
+	for len(lines) < height-2 {
+		lines = append(lines, m.frameLine("", inner))
+	}
+	scroll := ""
+	if len(allLines) > available {
+		scroll = fmt.Sprintf("  %d-%d/%d", m.overlayOffset+1, end, len(allLines))
+	}
+	footer := lipgloss.NewStyle().Foreground(muted).Render(" "+hint) + lipgloss.NewStyle().Foreground(muted).Render(scroll)
+	lines = append(lines, m.frameLine(footer, inner))
+	lines = append(lines, "└"+strings.Repeat("─", inner)+"┘")
+	return strings.Join(lines, "\n")
 }
 
 func (m *Model) overlayContent(width int) (string, string) {

@@ -200,7 +200,7 @@ func TestCommandAndFilterPromptRenderAtTop(t *testing.T) {
 	for _, key := range []string{"r", "e", "q"} {
 		_, _ = m.handleKey(key)
 	}
-	if view := m.View().Content; !strings.Contains(view, "❯ req") {
+	if view := m.View().Content; !strings.Contains(view, "req▊") {
 		t.Fatalf("command prompt not rendered at top: %q", view)
 	}
 
@@ -208,7 +208,7 @@ func TestCommandAndFilterPromptRenderAtTop(t *testing.T) {
 	_, _ = m.Update(tea.WindowSizeMsg{Width: 110, Height: 32})
 	_, _ = m.handleKey("/")
 	_, _ = m.handleKey("c")
-	if view := m.View().Content; !strings.Contains(view, "🔍 c") {
+	if view := m.View().Content; !strings.Contains(view, "c▊") {
 		t.Fatalf("filter prompt not rendered at top: %q", view)
 	}
 }
