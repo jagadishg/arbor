@@ -1299,13 +1299,13 @@ func (m *Model) renderHeader(width int) string {
 }
 
 func (m *Model) renderStructuredHeader(width int) string {
-	label := lipgloss.NewStyle().Foreground(muted).Bold(true)
+	label := lipgloss.NewStyle().Foreground(blue).Bold(true)
 	brand := lipgloss.NewStyle().Foreground(blue).Bold(true)
 	value := lipgloss.NewStyle().Foreground(foreground)
 	accent := lipgloss.NewStyle().Foreground(green).Bold(true)
 	if width < 90 {
 		line1 := " " + brand.Render("ARBOR") + "  " + label.Render("Workspace:") + " " + value.Render(truncate(m.app.Workspace.Name, max(10, width/4))) + "  " + label.Render("Env:") + " " + accent.Render(firstOr(m.environment, "none"))
-		line2 := " " + label.Render("View:") + " " + accent.Render(m.section.String()) + "  " + label.Render("Keys:") + " " + value.Render(truncate(m.contextualShortcuts(), max(10, width-16)))
+		line2 := " " + label.Render("View:") + " " + accent.Render(m.section.String()) + "  " + label.Render("Keys:") + " " + highlightShortcutLine(truncate(m.contextualShortcuts(), max(10, width-16)))
 		return lipgloss.NewStyle().Background(panel).Width(width).Render(line1 + "\n" + line2)
 	}
 
@@ -1342,15 +1342,38 @@ func (m *Model) renderStructuredHeader(width int) string {
 		infoCell := infoStyle.Render(truncate(info[index], infoWidth))
 		shortcutCell := ""
 		if index < len(shortcutLines) {
-			shortcutStyle := value
 			if index == 0 {
-				shortcutStyle = label
+				shortcutCell = label.Render(shortcutLines[index])
+			} else {
+				shortcutCell = highlightShortcutLine(truncate(shortcutLines[index], shortcutWidth))
 			}
-			shortcutCell = shortcutStyle.Render(truncate(shortcutLines[index], shortcutWidth))
 		}
 		rows = append(rows, fitHeaderCell(infoCell, infoWidth)+" "+fitHeaderCell(shortcutCell, shortcutWidth)+" "+fitHeaderCell(logoCell, logoWidth))
 	}
 	return lipgloss.NewStyle().Background(panel).Width(width).Render(strings.Join(rows, "\n"))
+}
+
+func highlightShortcutLine(line string) string {
+	base := lipgloss.NewStyle().Foreground(foreground)
+	key := lipgloss.NewStyle().Foreground(yellow).Bold(true)
+	var out strings.Builder
+	for len(line) > 0 {
+		start := strings.IndexByte(line, '[')
+		if start < 0 {
+			out.WriteString(base.Render(line))
+			break
+		}
+		out.WriteString(base.Render(line[:start]))
+		end := strings.IndexByte(line[start:], ']')
+		if end < 0 {
+			out.WriteString(base.Render(line[start:]))
+			break
+		}
+		end += start + 1
+		out.WriteString(key.Render(line[start:end]))
+		line = line[end:]
+	}
+	return out.String()
 }
 
 func fitHeaderCell(value string, width int) string {
