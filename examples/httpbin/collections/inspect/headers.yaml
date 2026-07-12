@@ -1,0 +1,15 @@
+version: 1
+kind: request
+id: inspect.headers
+name: Inspect headers
+description: Echoes the request headers; asserts the Host and a custom header round-trip.
+method: GET
+url: "{{base_url}}/headers"
+
+headers:
+  X-Arbor-Demo: "{{greeting}}"
+
+assert:
+  - status == 200
+  - body.headers.Host == "httpbin.org"
+  - body.headers.X-Arbor-Demo == "{{greeting}}"

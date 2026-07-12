@@ -1,0 +1,4 @@
+version: 1
+kind: collection
+name: status
+description: Endpoints that return a chosen HTTP status code, for asserting on non-200 responses.

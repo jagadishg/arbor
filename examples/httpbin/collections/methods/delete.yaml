@@ -1,0 +1,11 @@
+version: 1
+kind: request
+id: methods.delete
+name: DELETE request
+description: Delete a resource; httpbin returns the request URL under url.
+method: DELETE
+url: "{{base_url}}/delete"
+
+assert:
+  - status == 200
+  - body.url contains "/delete"

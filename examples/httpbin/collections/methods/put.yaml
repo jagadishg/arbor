@@ -1,0 +1,16 @@
+version: 1
+kind: request
+id: methods.put
+name: PUT request
+description: Replace a resource with a JSON body; httpbin echoes it under json.
+method: PUT
+url: "{{base_url}}/put"
+
+body:
+  stage: put
+  replaced: true
+
+assert:
+  - status == 200
+  - body.json.stage == "put"
+  - body.json.replaced == true

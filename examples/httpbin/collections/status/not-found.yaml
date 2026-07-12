@@ -1,0 +1,10 @@
+version: 1
+kind: request
+id: status.not-found
+name: 404 Not Found
+description: Returns 404 so you can assert on a missing resource.
+method: GET
+url: "{{base_url}}/status/404"
+
+assert:
+  - status == 404

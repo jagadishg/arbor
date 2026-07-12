@@ -1,0 +1,10 @@
+version: 1
+kind: request
+id: methods.options
+name: OPTIONS request
+description: OPTIONS asks which methods an endpoint allows.
+method: OPTIONS
+url: "{{base_url}}/anything"
+
+assert:
+  - status == 200

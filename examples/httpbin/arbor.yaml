@@ -1,0 +1,7 @@
+version: 1
+name: HTTPBin API
+description: Public httpbin.org endpoints exercising every HTTP method. Runnable without credentials.
+defaultEnvironment: public
+
+http:
+  timeout: 15s

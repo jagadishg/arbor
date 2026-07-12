@@ -1,0 +1,8 @@
+version: 1
+kind: environment
+name: public
+description: The public httpbin.org service; no authentication required.
+
+variables:
+  base_url: https://httpbin.org
+  greeting: hello

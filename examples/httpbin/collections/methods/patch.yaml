@@ -1,0 +1,14 @@
+version: 1
+kind: request
+id: methods.patch
+name: PATCH request
+description: Partially update a resource; httpbin echoes the body under json.
+method: PATCH
+url: "{{base_url}}/patch"
+
+body:
+  stage: patch
+
+assert:
+  - status == 200
+  - body.json.stage == "patch"

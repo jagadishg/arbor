@@ -1,0 +1,17 @@
+version: 1
+kind: request
+id: methods.get
+name: GET request
+description: Simple GET with a query parameter echoed back under args.
+method: GET
+url: "{{base_url}}/get"
+
+query:
+  greeting: "{{greeting}}"
+
+assert:
+  - status == 200
+  - body.args.greeting == "{{greeting}}"
+
+extract:
+  origin: body.origin

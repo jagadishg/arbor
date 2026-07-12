@@ -1,0 +1,19 @@
+version: 1
+kind: scenario
+id: httpbin.smoke
+name: HTTPBin smoke test
+description: Exercises a GET, a POST that echoes a body, and a non-200 status in sequence.
+
+steps:
+  - request: methods.get
+    extract:
+      caller: body.origin
+
+  - request: methods.post
+    assert:
+      - status == 200
+      - body.json.name == "Ada"
+
+  - request: status.not-found
+    assert:
+      - status == 404

@@ -70,6 +70,16 @@ arbor run github.user
 arbor scenario github.profile
 ```
 
+`examples/httpbin` is a second, credential-free workspace against
+[httpbin.org](https://httpbin.org) with collections for every HTTP method, common status
+codes, and request inspection:
+
+```bash
+cd examples/httpbin
+arbor run methods.post      # GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS all covered
+arbor scenario httpbin.smoke
+```
+
 ## Workspace layout
 
 ```text

@@ -1,0 +1,10 @@
+version: 1
+kind: request
+id: status.ok
+name: 200 OK
+description: Returns 200 OK.
+method: GET
+url: "{{base_url}}/status/200"
+
+assert:
+  - status == 200

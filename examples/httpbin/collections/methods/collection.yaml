@@ -1,0 +1,4 @@
+version: 1
+kind: collection
+name: methods
+description: One request per HTTP method, echoed back by httpbin.

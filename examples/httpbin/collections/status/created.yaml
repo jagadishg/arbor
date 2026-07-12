@@ -1,0 +1,10 @@
+version: 1
+kind: request
+id: status.created
+name: 201 Created
+description: Returns 201 Created.
+method: POST
+url: "{{base_url}}/status/201"
+
+assert:
+  - status == 201

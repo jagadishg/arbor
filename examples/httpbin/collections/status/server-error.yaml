@@ -1,0 +1,10 @@
+version: 1
+kind: request
+id: status.server-error
+name: 500 Server Error
+description: Returns 500 so you can assert on an upstream failure.
+method: GET
+url: "{{base_url}}/status/500"
+
+assert:
+  - status == 500

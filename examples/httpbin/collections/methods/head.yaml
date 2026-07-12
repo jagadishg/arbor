@@ -1,0 +1,10 @@
+version: 1
+kind: request
+id: methods.head
+name: HEAD request
+description: HEAD returns headers only, with no response body.
+method: HEAD
+url: "{{base_url}}/anything"
+
+assert:
+  - status == 200

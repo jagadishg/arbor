@@ -1,0 +1,21 @@
+version: 1
+kind: request
+id: methods.post
+name: POST request
+description: POST a JSON body; httpbin echoes it back under json.
+method: POST
+url: "{{base_url}}/post"
+
+headers:
+  Content-Type: application/json
+
+body:
+  name: Ada
+  active: true
+  visits: 3
+
+assert:
+  - status == 200
+  - body.json.name == "Ada"
+  - body.json.active == true
+  - body.json.visits == 3

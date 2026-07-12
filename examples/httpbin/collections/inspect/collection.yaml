@@ -1,0 +1,4 @@
+version: 1
+kind: collection
+name: inspect
+description: Endpoints that reflect the request Arbor sent, useful for debugging headers.
