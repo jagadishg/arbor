@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -57,5 +58,29 @@ func TestNormalizeExpandsHomeAndRelative(t *testing.T) {
 	}
 	if got := normalize("relative/dir"); !filepath.IsAbs(got) {
 		t.Fatalf("relative path not made absolute: %q", got)
+	}
+}
+
+func TestDirIsUniversalXDG(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "/tmp/xdg-home")
+	dir, err := Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dir != "/tmp/xdg-home/arbor" {
+		t.Fatalf("Dir() with XDG_CONFIG_HOME = %q, want /tmp/xdg-home/arbor", dir)
+	}
+
+	t.Setenv("XDG_CONFIG_HOME", "")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err = Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dir != filepath.Join(home, ".config", "arbor") {
+		t.Fatalf("Dir() fallback = %q, want %s/.config/arbor", dir, home)
 	}
 }

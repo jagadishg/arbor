@@ -201,9 +201,8 @@ The command exits non-zero when transport, extraction, or assertion failures occ
 Each API project is its own workspace (its own `arbor.yaml`, collections, and environments).
 Arbor keeps a central registry — like k9s remembering your clusters — so you can hop between
 projects without caring which directory you launched from. It lives at
-`$XDG_CONFIG_HOME/arbor/config.yaml` on Linux and
-`~/Library/Application Support/arbor/config.yaml` on macOS (override with `ARBOR_CONFIG`). Run
-`arbor config path` to print the exact location.
+`~/.config/arbor/config.yaml` on every platform (honoring `XDG_CONFIG_HOME`, or override with
+`ARBOR_CONFIG`). Run `arbor config path` to print the exact location.
 
 ```text
 ~/apis/
@@ -304,7 +303,7 @@ aliases:
 
 Aliases intentionally target resource views, keeping command navigation as predictable as k9s while the workspace remains fully local and shareable.
 
-Arbor follows k9s's global-plus-contextual convention for aliases and hotkeys. It loads user-wide files from your operating system configuration directory (`$XDG_CONFIG_HOME/arbor` on Linux, the standard application-config directory on macOS and Windows), then lets `.arbor/` files in the workspace override them.
+Arbor follows k9s's global-plus-contextual convention for aliases and hotkeys. It loads user-wide files from `~/.config/arbor/` (honoring `XDG_CONFIG_HOME`) on every platform, then lets `.arbor/` files in the workspace override them.
 
 ```yaml
 # .arbor/hotkeys.yaml

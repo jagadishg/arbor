@@ -31,18 +31,33 @@ type Config struct {
 	LastWorkspace string  `yaml:"lastWorkspace,omitempty"`
 }
 
+// Dir returns Arbor's user-level config directory. It is universal across
+// platforms: $XDG_CONFIG_HOME/arbor when that variable is set, otherwise
+// ~/.config/arbor — matching k9s and most modern CLIs rather than Go's
+// platform-specific os.UserConfigDir (which is ~/Library/Application Support on
+// macOS).
+func Dir() (string, error) {
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "arbor"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config", "arbor"), nil
+}
+
 // Path returns the location of the central config file. It honours the
-// ARBOR_CONFIG environment variable when set, otherwise it lives beside the
-// interaction files under the OS config directory.
+// ARBOR_CONFIG environment variable when set, otherwise it lives under Dir.
 func Path() (string, error) {
 	if custom := os.Getenv("ARBOR_CONFIG"); custom != "" {
 		return custom, nil
 	}
-	dir, err := os.UserConfigDir()
+	dir, err := Dir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "arbor", "config.yaml"), nil
+	return filepath.Join(dir, "config.yaml"), nil
 }
 
 // Load reads the central config. A missing file is not an error: it returns an

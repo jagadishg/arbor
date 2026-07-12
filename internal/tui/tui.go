@@ -1540,8 +1540,8 @@ func loadHotkeys(root string) (map[string]hotkey, error) {
 
 func interactionPaths(root, file string) []string {
 	paths := []string{}
-	if config, err := os.UserConfigDir(); err == nil {
-		paths = append(paths, filepath.Join(config, "arbor", file))
+	if dir, err := config.Dir(); err == nil {
+		paths = append(paths, filepath.Join(dir, file))
 	}
 	return append(paths, filepath.Join(root, ".arbor", file))
 }
