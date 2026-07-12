@@ -405,9 +405,9 @@ func (m *Model) handleSplitKey(key string) (tea.Model, tea.Cmd) {
 		if m.running && m.cancel != nil {
 			m.cancel()
 			m.message = "Cancelling request…"
-		} else {
-			m.overlay = noOverlay
+			return m, nil
 		}
+		return m, tea.Quit
 	case "tab":
 		if m.focusedPane == paneRequest {
 			m.focusedPane = paneResponse
@@ -515,9 +515,9 @@ func (m *Model) handleOverlayKey(key string) (tea.Model, tea.Cmd) {
 		if m.running && m.cancel != nil {
 			m.cancel()
 			m.message = "Cancelling request…"
-		} else {
-			m.overlay = noOverlay
+			return m, nil
 		}
+		return m, tea.Quit
 	case "j", "down", "ctrl+d", "pagedown":
 		m.overlayOffset += max(1, m.modalHeight()/3)
 	case "k", "up", "ctrl+u", "pageup":

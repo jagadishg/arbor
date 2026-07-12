@@ -359,6 +359,35 @@ func TestRequestPaneShowsSentAndTogglesRevealAndDefinition(t *testing.T) {
 	}
 }
 
+func TestCtrlCQuitsFromViewers(t *testing.T) {
+	ws := &model.Workspace{Name: "Demo", Root: "/tmp/demo", Requests: []model.Request{{ID: "users.get", Name: "Get", Method: "GET", URL: "https://x/1"}}}
+	isQuit := func(cmd tea.Cmd) bool {
+		if cmd == nil {
+			return false
+		}
+		_, ok := cmd().(tea.QuitMsg)
+		return ok
+	}
+
+	// Split view (run result) — idle ctrl+c should quit.
+	m := NewModel(context.Background(), "/tmp/demo", "", &app.App{Workspace: ws})
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	m.requestResult = &model.RequestResult{Request: ws.Requests[0], Response: &model.Response{Status: "200 OK", StatusCode: 200, Body: []byte(`{}`)}}
+	m.overlay, m.focusedPane = responseOverlay, paneRequest
+	if _, cmd := m.handleKey("ctrl+c"); !isQuit(cmd) {
+		t.Fatal("ctrl+c in split view did not quit")
+	}
+	if m.overlay != responseOverlay {
+		t.Fatal("ctrl+c should not silently close the split view instead of quitting")
+	}
+
+	// Read-only overlay (describe/YAML/help) — idle ctrl+c should quit.
+	m.overlay = yamlOverlay
+	if _, cmd := m.handleKey("ctrl+c"); !isQuit(cmd) {
+		t.Fatal("ctrl+c in overlay viewer did not quit")
+	}
+}
+
 func TestSplitPaneRowsKeepStableWidth(t *testing.T) {
 	m := testModel()
 	rows := m.renderPane("Response", []string{"short", lipgloss.NewStyle().Bold(true).Render(strings.Repeat("x", 80))}, 32, 8, 0, true, strings.Repeat("hint ", 20))
