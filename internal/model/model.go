@@ -36,6 +36,8 @@ type Request struct {
 	Headers     map[string]string `yaml:"headers,omitempty"`
 	Query       map[string]string `yaml:"query,omitempty"`
 	Body        any               `yaml:"body,omitempty"`
+	Form        map[string]string `yaml:"form,omitempty"`
+	Files       map[string]string `yaml:"files,omitempty"`
 	Timeout     string            `yaml:"timeout,omitempty"`
 	Assert      []string          `yaml:"assert,omitempty"`
 	Extract     map[string]string `yaml:"extract,omitempty"`

@@ -79,6 +79,33 @@ description: Create, capture, and refund payments.
 
 `arbor new collection <name>` scaffolds one. The marker's `name` should match its folder.
 
+## File uploads
+
+A request can send `multipart/form-data` instead of a JSON/text `body`, using `form` for text
+fields and `files` for file parts (field name → path):
+
+```yaml
+version: 1
+kind: request
+id: avatars.upload
+name: Upload avatar
+method: POST
+url: "{{base_url}}/users/{{user_id}}/avatar"
+
+form:
+  caption: "Profile photo"
+
+files:
+  avatar: ./files/me.png
+```
+
+- File paths are relative to the request's own `.yaml` file (absolute paths are used as-is);
+  `{{variables}}` work in both `form` values and `files` paths.
+- `form` on its own (no `files`) is sent as `application/x-www-form-urlencoded`.
+- `form`/`files` and `body` are mutually exclusive.
+- In the TUI, `:attach <field>=<path>` adds a file entry to the selected request (it rewrites
+  the request file, normalising formatting).
+
 ## Environments
 
 Environment files live under `environments/` and use `kind: environment`.

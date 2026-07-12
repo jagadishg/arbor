@@ -605,6 +605,8 @@ type description struct {
 	File        string            `json:"file,omitempty"`
 	Headers     map[string]string `json:"headers,omitempty"`
 	Query       map[string]string `json:"query,omitempty"`
+	Form        map[string]string `json:"form,omitempty"`
+	Files       map[string]string `json:"files,omitempty"`
 	Assert      []string          `json:"assert,omitempty"`
 	Extract     map[string]string `json:"extract,omitempty"`
 	Steps       []string          `json:"steps,omitempty"`
@@ -617,7 +619,7 @@ type description struct {
 func describeResource(loaded *app.App, environment, ref string) (description, error) {
 	ws := loaded.Workspace
 	if request, ok := ws.RequestByRef(ref); ok {
-		out := description{Kind: "request", Ref: request.Ref(), Name: request.Name, Description: request.Description, Collection: firstOr(request.Collection, "default"), Method: strings.ToUpper(request.Method), URL: request.URL, File: relPath(ws.Root, request.Path), Headers: request.Headers, Query: request.Query, Assert: request.Assert, Extract: request.Extract, Environment: firstOr(environment, ws.DefaultEnv)}
+		out := description{Kind: "request", Ref: request.Ref(), Name: request.Name, Description: request.Description, Collection: firstOr(request.Collection, "default"), Method: strings.ToUpper(request.Method), URL: request.URL, File: relPath(ws.Root, request.Path), Headers: request.Headers, Query: request.Query, Form: request.Form, Files: request.Files, Assert: request.Assert, Extract: request.Extract, Environment: firstOr(environment, ws.DefaultEnv)}
 		if vars, err := loaded.Variables(environment, nil); err == nil {
 			if resolved, err := vars.Resolve(request.URL); err == nil {
 				out.ResolvedURL = vars.Redact(resolved)
@@ -680,6 +682,8 @@ func printDescription(out io.Writer, d description) {
 	}
 	printSection(out, "Headers", mapLines(d.Headers))
 	printSection(out, "Query", mapLines(d.Query))
+	printSection(out, "Form", mapLines(d.Form))
+	printSection(out, "Files", mapLines(d.Files))
 	printSection(out, "Assertions", d.Assert)
 	printSection(out, "Extract", mapLines(d.Extract))
 	printSection(out, "Steps", d.Steps)

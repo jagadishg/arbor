@@ -56,6 +56,7 @@ Inside Arbor:
 - `j` / `k` or arrow keys move through resources; `g` / `G` jump to the first or last row.
 - `Enter` or `d` describes the selected resource, just as it does in k9s; in the collections view `Enter` drills into that collection's requests.
 - `r` runs the selected request or scenario; `l` shows its last response.
+- Running a request opens a **split view** — request on the left, response on the right (focused by default). `Tab` (or `h`/`l`) switches focus, `j`/`k` scroll the focused pane; the response shows a colored status line, timing, assertions, headers, and a syntax-highlighted body.
 - `y` shows the source YAML and `e` opens it in `$EDITOR`.
 - `:` opens an alias-aware command prompt at the top of the screen with an autocomplete list; `Tab`, `Ctrl-f`, or `→` accepts a suggestion.
 - `Ctrl-a` lists resource aliases; `Esc` or `h` returns to the previous view.
@@ -145,6 +146,30 @@ wire; they exist so people *and* coding agents can understand a workspace withou
 every file.
 
 See [Workspace format](docs/workspace-format.md) for the full schema and precedence rules.
+
+## File uploads
+
+A request can send `multipart/form-data` with `form` (text fields) and `files` (field → path):
+
+```yaml
+version: 1
+kind: request
+id: avatars.upload
+name: Upload avatar
+method: POST
+url: "{{base_url}}/avatar"
+
+form:
+  caption: "Profile photo"
+
+files:
+  avatar: ./files/me.png
+```
+
+File paths are relative to the request file (absolute paths work too), and `{{variables}}`
+resolve in both fields and paths. `form` alone (no files) is sent as
+`application/x-www-form-urlencoded`. In the TUI, `:attach <field>=<path>` adds a file to the
+selected request. See `examples/httpbin/collections/uploads` for a runnable upload.
 
 ## Environments and secrets
 
@@ -290,6 +315,7 @@ Use `--json` with `arbor run` for machine-readable output.
 :ws twilio-apis           Switch workspace directly
 :use staging              Set the active environment
 :ctx staging              Same as :use (k9s-style alias)
+:attach doc=./file.pdf    Attach a multipart file to the selected request
 :run users.get            Run a request by reference
 :run auth.smoke           Run a scenario by reference
 :aliases                  Show all resource aliases

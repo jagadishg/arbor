@@ -15,6 +15,8 @@
     "url": { "type": "string", "minLength": 1 },
     "headers": { "type": "object", "additionalProperties": { "type": "string" } },
     "query": { "type": "object", "additionalProperties": { "type": "string" } },
+    "form": { "type": "object", "additionalProperties": { "type": "string" } },
+    "files": { "type": "object", "additionalProperties": { "type": "string" } },
     "body": true,
     "timeout": { "type": "string" },
     "assert": { "type": "array", "items": { "type": "string" } },

@@ -58,6 +58,13 @@ const (
 	aliasOverlay
 )
 
+type pane int
+
+const (
+	paneRequest pane = iota
+	paneResponse
+)
+
 type viewLocation struct {
 	section  section
 	filter   string
@@ -103,6 +110,9 @@ type Model struct {
 
 	overlay        overlay
 	overlayOffset  int
+	focusedPane    pane
+	requestOffset  int
+	responseOffset int
 	width          int
 	height         int
 	running        bool
@@ -157,7 +167,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case requestDoneMsg:
 		result := model.RequestResult(msg)
 		m.running, m.cancel, m.requestResult, m.scenarioReport = false, nil, &result, nil
-		m.overlay = responseOverlay
+		m.overlay, m.focusedPane, m.requestOffset, m.responseOffset = responseOverlay, paneResponse, 0, 0
 		if result.Passed() {
 			m.message = "Request completed"
 		} else {
@@ -253,6 +263,7 @@ func (m *Model) handleKey(key string) (tea.Model, tea.Cmd) {
 	case "l":
 		if m.hasResultForSelected() {
 			m.overlay, m.overlayOffset = responseOverlay, 0
+			m.focusedPane, m.requestOffset, m.responseOffset = paneResponse, 0, 0
 		} else {
 			m.message = "No response recorded for this resource"
 		}
@@ -286,7 +297,70 @@ func (m *Model) handleKey(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) inSplitView() bool {
+	return m.overlay == responseOverlay && m.requestResult != nil
+}
+
+func (m *Model) handleSplitKey(key string) (tea.Model, tea.Cmd) {
+	step := max(1, m.modalHeight()/3)
+	offset := &m.responseOffset
+	if m.focusedPane == paneRequest {
+		offset = &m.requestOffset
+	}
+	switch key {
+	case "q", "esc":
+		m.overlay = noOverlay
+	case "ctrl+c":
+		if m.running && m.cancel != nil {
+			m.cancel()
+			m.message = "Cancelling request…"
+		} else {
+			m.overlay = noOverlay
+		}
+	case "tab":
+		if m.focusedPane == paneRequest {
+			m.focusedPane = paneResponse
+		} else {
+			m.focusedPane = paneRequest
+		}
+	case "h", "left":
+		m.focusedPane = paneRequest
+	case "l", "right":
+		m.focusedPane = paneResponse
+	case "j", "down", "ctrl+d", "pagedown":
+		*offset += step
+	case "k", "up", "ctrl+u", "pageup":
+		*offset = max(0, *offset-step)
+	case "g", "home":
+		*offset = 0
+	case "e":
+		m.overlay = noOverlay
+		return m, m.editRequestInView()
+	case "r":
+		if !m.running {
+			return m, m.runRequest(m.requestResult.Request.Ref())
+		}
+	}
+	return m, nil
+}
+
+func (m *Model) editRequestInView() tea.Cmd {
+	path := m.requestResult.Request.Path
+	if path == "" {
+		path = m.app.Workspace.Path
+	}
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vi"
+	}
+	parts := strings.Fields(editor)
+	return tea.ExecProcess(exec.Command(parts[0], append(parts[1:], path)...), func(err error) tea.Msg { return editorDoneMsg{err: err} })
+}
+
 func (m *Model) handleOverlayKey(key string) (tea.Model, tea.Cmd) {
+	if m.inSplitView() {
+		return m.handleSplitKey(key)
+	}
 	switch key {
 	case "q", "esc", "d", "y", "l", "?", "ctrl+a":
 		m.overlay, m.overlayOffset = noOverlay, 0
@@ -447,10 +521,68 @@ func (m *Model) executeCommand(command string) (tea.Model, tea.Cmd) {
 			return m, m.runScenario(scenario.Ref())
 		}
 		m.message = "Resource not found: " + fields[1]
+	case "attach":
+		field, path, ok := strings.Cut(strings.TrimSpace(strings.TrimPrefix(command, fields[0])), "=")
+		if !ok || strings.TrimSpace(field) == "" || strings.TrimSpace(path) == "" {
+			m.message = "Usage: :attach <field>=<path>"
+			return m, nil
+		}
+		m.attachFile(strings.TrimSpace(field), strings.TrimSpace(path))
 	default:
 		m.message = "Unknown command: " + fields[0] + " — Ctrl-a lists aliases"
 	}
 	return m, nil
+}
+
+// attachFile adds a multipart file entry to the targeted request (the one shown in
+// the response view, else the selected request) and rewrites its YAML file.
+func (m *Model) attachFile(field, path string) {
+	var request model.Request
+	if m.inSplitView() {
+		request = m.requestResult.Request
+	} else if selected, ok := m.selectedRequest(); ok {
+		request = selected
+	} else {
+		m.message = "Select a request to attach a file to"
+		return
+	}
+	current, ok := m.app.Workspace.RequestByRef(request.Ref())
+	if !ok || current.Path == "" {
+		m.message = "Request not found on disk"
+		return
+	}
+	if current.Body != nil {
+		m.message = "Cannot attach a file to a request that has a body"
+		return
+	}
+	if current.Files == nil {
+		current.Files = map[string]string{}
+	}
+	current.Files[field] = path
+	data, err := yaml.Marshal(current)
+	if err != nil {
+		m.message = "Attach failed: " + err.Error()
+		return
+	}
+	if err := os.WriteFile(current.Path, data, 0o644); err != nil {
+		m.message = "Attach failed: " + err.Error()
+		return
+	}
+	if loaded, err := app.Load(m.dir); err == nil {
+		m.app = loaded
+	}
+	m.message = fmt.Sprintf("Attached %s (%s) to %s", field, path, current.Ref())
+}
+
+func (m *Model) selectedRequest() (model.Request, bool) {
+	items := m.items()
+	if len(items) == 0 {
+		return model.Request{}, false
+	}
+	if request, ok := items[m.selected].value.(model.Request); ok {
+		return request, true
+	}
+	return model.Request{}, false
 }
 
 func (m *Model) navigate(next section, filter, scope string) {
@@ -818,7 +950,7 @@ func (m *Model) suggestions() []suggestion {
 				values = append(values, suggestion{alias, target + " view"})
 			}
 		}
-		for _, command := range []suggestion{{"requests", "browse requests"}, {"collections", "browse collections"}, {"scenarios", "browse scenarios"}, {"environments", "browse environments"}, {"workspaces", "switch workspace"}, {"aliases", "show resource aliases"}, {"help", "show keyboard shortcuts"}, {"reload", "reload workspace files"}, {"use", "switch environment"}, {"ctx", "switch environment"}, {"run", "run a request or scenario"}, {"quit", "quit Arbor"}} {
+		for _, command := range []suggestion{{"requests", "browse requests"}, {"collections", "browse collections"}, {"scenarios", "browse scenarios"}, {"environments", "browse environments"}, {"workspaces", "switch workspace"}, {"attach", "attach a file to a request"}, {"aliases", "show resource aliases"}, {"help", "show keyboard shortcuts"}, {"reload", "reload workspace files"}, {"use", "switch environment"}, {"ctx", "switch environment"}, {"run", "run a request or scenario"}, {"quit", "quit Arbor"}} {
 			if strings.HasPrefix(command.value, input) {
 				values = append(values, command)
 			}
@@ -867,7 +999,13 @@ func (m *Model) render() string {
 	width, height := max(m.width, 50), max(m.height, 12)
 	header, footer := m.renderHeader(width), m.renderFooter(width)
 	if m.overlay != noOverlay {
-		return lipgloss.NewStyle().Foreground(foreground).Render(header + "\n" + m.renderOverlay(width, height-lipgloss.Height(header)))
+		var body string
+		if m.inSplitView() {
+			body = m.renderSplit(width, height-lipgloss.Height(header))
+		} else {
+			body = m.renderOverlay(width, height-lipgloss.Height(header))
+		}
+		return lipgloss.NewStyle().Foreground(foreground).Render(header + "\n" + body)
 	}
 	sections := header
 	promptHeight := 0
@@ -1043,6 +1181,205 @@ func (m *Model) tableRow(index int, item item, width int) string {
 		return style.Render(fmt.Sprintf("%s%-*s %s%s", prefix, nameWidth, truncate(value.Name, nameWidth), truncate(value.Path, pathWidth), marker))
 	}
 	return ""
+}
+
+// renderSplit draws the run result as two side-by-side framed panes: the request
+// on the left and the response on the right, k9s-style. The focused pane has a
+// blue border and receives scroll keys; the other is muted.
+func (m *Model) renderSplit(width, height int) string {
+	height = max(6, height)
+	leftOuter := max(24, width*42/100)
+	rightOuter := max(24, width-leftOuter)
+
+	reqLines := m.requestPaneLines(leftOuter - 3)
+	respLines := m.responsePaneLines(rightOuter - 3)
+
+	available := max(1, height-3)
+	m.requestOffset = clampOffset(m.requestOffset, len(reqLines), available)
+	m.responseOffset = clampOffset(m.responseOffset, len(respLines), available)
+
+	left := m.renderPane("Request "+m.requestResult.Request.Ref(), reqLines, leftOuter, height, m.requestOffset, m.focusedPane == paneRequest, "[e] edit  [tab] focus")
+	right := m.renderPane("Response", respLines, rightOuter, height, m.responseOffset, m.focusedPane == paneResponse, "[j/k] scroll  [r] run  [q] close")
+
+	rows := make([]string, height)
+	for index := 0; index < height; index++ {
+		rows[index] = left[index] + right[index]
+	}
+	return strings.Join(rows, "\n")
+}
+
+func clampOffset(offset, total, available int) int {
+	maxOffset := max(0, total-available)
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return offset
+}
+
+// renderPane frames a list of (already-styled) content lines into a box of exactly
+// outerWidth columns and height rows, scrolled to offset.
+func (m *Model) renderPane(title string, lines []string, outerWidth, height, offset int, focused bool, footer string) []string {
+	inner := outerWidth - 2
+	color := muted
+	if focused {
+		color = blue
+	}
+	border := lipgloss.NewStyle().Foreground(color)
+	titleText := "─ " + title + " "
+	if lipgloss.Width(titleText) > inner {
+		titleText = truncate(titleText, inner)
+	}
+	styledTitle := lipgloss.NewStyle().Foreground(blue).Bold(true).Render(titleText)
+	top := border.Render("┌") + styledTitle + border.Render(strings.Repeat("─", max(0, inner-lipgloss.Width(titleText)))+"┐")
+
+	frame := func(content string) string {
+		pad := max(0, inner-1-lipgloss.Width(content))
+		return border.Render("│") + " " + content + strings.Repeat(" ", pad) + border.Render("│")
+	}
+
+	out := []string{top}
+	available := max(1, height-3)
+	end := min(len(lines), offset+available)
+	for index := offset; index < end; index++ {
+		out = append(out, frame(lines[index]))
+	}
+	for len(out) < height-2 {
+		out = append(out, border.Render("│")+strings.Repeat(" ", inner)+border.Render("│"))
+	}
+	hint := footer
+	if len(lines) > available {
+		hint += fmt.Sprintf("  %d-%d/%d", offset+1, end, len(lines))
+	}
+	out = append(out, frame(lipgloss.NewStyle().Foreground(muted).Render(hint)))
+	out = append(out, border.Render("└"+strings.Repeat("─", inner)+"┘"))
+	return out
+}
+
+func (m *Model) requestPaneLines(inner int) []string {
+	raw := ""
+	if path := m.requestResult.Request.Path; path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			raw = string(data)
+		}
+	}
+	if strings.TrimSpace(raw) == "" {
+		raw = strings.ToUpper(m.requestResult.Request.Method) + " " + m.requestResult.Request.URL
+	}
+	var out []string
+	for _, line := range strings.Split(wrap(raw, inner), "\n") {
+		out = append(out, highlightYAMLLine(line))
+	}
+	return out
+}
+
+func (m *Model) responsePaneLines(inner int) []string {
+	result := m.requestResult
+	if result.Error != nil {
+		lines := []string{lipgloss.NewStyle().Foreground(red).Bold(true).Render("Request failed"), ""}
+		for _, line := range strings.Split(wrap(result.Error.Error(), inner), "\n") {
+			lines = append(lines, lipgloss.NewStyle().Foreground(red).Render(line))
+		}
+		return lines
+	}
+	response := result.Response
+	lines := []string{
+		statusStyle(response.StatusCode).Render("●") + " " + truncate(response.Status, max(1, inner-2)),
+		lipgloss.NewStyle().Foreground(muted).Render(truncate(fmt.Sprintf("%s · %d B", response.Duration.Round(time.Millisecond), response.Size), inner)),
+	}
+	if len(result.Assertions) > 0 {
+		lines = append(lines, "", lipgloss.NewStyle().Foreground(muted).Bold(true).Render("Assertions"))
+		for _, assertion := range result.Assertions {
+			mark := lipgloss.NewStyle().Foreground(green).Render("✓")
+			if !assertion.Passed {
+				mark = lipgloss.NewStyle().Foreground(red).Render("✗")
+			}
+			text := assertion.Expression
+			if assertion.Message != "" {
+				text += " — " + assertion.Message
+			}
+			lines = append(lines, mark+" "+truncate(text, max(1, inner-2)))
+		}
+	}
+	if len(response.Headers) > 0 {
+		lines = append(lines, "", lipgloss.NewStyle().Foreground(muted).Bold(true).Render("Headers"))
+		for _, key := range sortedHeaderKeys(response.Headers) {
+			line := truncate(key+": "+strings.Join(response.Headers[key], ", "), inner)
+			lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render(line))
+		}
+	}
+	lines = append(lines, "", lipgloss.NewStyle().Foreground(muted).Bold(true).Render("Body"))
+	for _, line := range strings.Split(formatBody(response.Body, inner), "\n") {
+		lines = append(lines, highlightJSONLine(line))
+	}
+	return lines
+}
+
+func statusStyle(code int) lipgloss.Style {
+	color := blue
+	switch {
+	case code >= 200 && code < 300:
+		color = green
+	case code >= 300 && code < 400:
+		color = yellow
+	case code >= 400:
+		color = red
+	}
+	return lipgloss.NewStyle().Foreground(color).Bold(true)
+}
+
+func sortedHeaderKeys(headers map[string][]string) []string {
+	keys := make([]string, 0, len(headers))
+	for key := range headers {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// highlightJSONLine colours a single line of pretty-printed JSON: object keys
+// blue, string values green, numbers yellow, booleans/null purple.
+func highlightJSONLine(line string) string {
+	trimmed := strings.TrimLeft(line, " ")
+	indent := line[:len(line)-len(trimmed)]
+	if trimmed == "" {
+		return line
+	}
+	if strings.HasPrefix(trimmed, "\"") {
+		if end := strings.Index(trimmed[1:], "\""); end >= 0 {
+			keyEnd := end + 2
+			if keyEnd < len(trimmed) && strings.HasPrefix(trimmed[keyEnd:], ":") {
+				key := lipgloss.NewStyle().Foreground(blue).Render(trimmed[:keyEnd])
+				return indent + key + ":" + highlightJSONValue(trimmed[keyEnd+1:])
+			}
+		}
+	}
+	return indent + highlightJSONValue(trimmed)
+}
+
+func highlightJSONValue(value string) string {
+	lead := value[:len(value)-len(strings.TrimLeft(value, " "))]
+	scalar := strings.TrimLeft(value, " ")
+	trailing := ""
+	if strings.HasSuffix(scalar, ",") {
+		trailing, scalar = ",", scalar[:len(scalar)-1]
+	}
+	switch {
+	case scalar == "":
+		return value
+	case strings.HasPrefix(scalar, "{") || strings.HasPrefix(scalar, "[") || strings.HasPrefix(scalar, "}") || strings.HasPrefix(scalar, "]"):
+		return lead + scalar + trailing
+	case strings.HasPrefix(scalar, "\""):
+		return lead + lipgloss.NewStyle().Foreground(green).Render(scalar) + trailing
+	case scalar == "true" || scalar == "false" || scalar == "null":
+		return lead + lipgloss.NewStyle().Foreground(purple).Render(scalar) + trailing
+	case isNumber(scalar):
+		return lead + lipgloss.NewStyle().Foreground(yellow).Render(scalar) + trailing
+	default:
+		return lead + lipgloss.NewStyle().Foreground(green).Render(scalar) + trailing
+	}
 }
 
 // renderOverlay draws describe/YAML/response/help panels as a full-width framed
@@ -1264,7 +1601,7 @@ func (m *Model) responseContent(width int) string {
 
 func (m *Model) helpContent() string {
 	help := strings.Join([]string{
-		"Navigation", "  j/k, ↑/↓     move selection", "  g/G          first/last resource", "  Ctrl-f/b     page down/up", "  Enter        drill into a collection / switch workspace (or describe)", "  Esc, q, h, [ back through view history", "  ], →         forward through view history", "", "Resource actions", "  Enter, d     describe selected resource", "  y            show YAML", "  e            edit in $EDITOR", "  r            run selected request or scenario", "  l            show last response (like logs)", "  Ctrl-w       toggle wide table columns", "", "Views and commands", "  :            command prompt (top, k9s-style)", "  :ws          switch workspace (project); :ws <name> jumps directly", "  :use <env>   set the active environment (:ctx is a k9s-style alias)", "  :collections browse collections; :req :sc :env for the rest", "  Ctrl-a       show resource aliases", "  /            filter the current resource view", "  Tab/Ctrl-f/→ accept command suggestion", "  ↑/↓          choose command suggestion", "  Ctrl-u       clear command; Ctrl-w removes its last word", "  Ctrl-r       reload workspace", "  ?            this help", "  Ctrl-c, :q   quit (or cancel a running request)",
+		"Navigation", "  j/k, ↑/↓     move selection", "  g/G          first/last resource", "  Ctrl-f/b     page down/up", "  Enter        drill into a collection / switch workspace (or describe)", "  Esc, q, h, [ back through view history", "  ], →         forward through view history", "", "Resource actions", "  Enter, d     describe selected resource", "  y            show YAML", "  e            edit in $EDITOR", "  r            run selected request or scenario", "  l            show last response (like logs)", "  Ctrl-w       toggle wide table columns", "", "Views and commands", "  :            command prompt (top, k9s-style)", "  :ws          switch workspace (project); :ws <name> jumps directly", "  :use <env>   set the active environment (:ctx is a k9s-style alias)", "  :attach f=./x attach a multipart file to the selected request", "  :collections browse collections; :req :sc :env for the rest", "", "Response split view", "  Tab          switch focus between request and response", "  h/l, ←/→     focus request / response pane", "  j/k          scroll the focused pane; e edits the request", "  Ctrl-a       show resource aliases", "  /            filter the current resource view", "  Tab/Ctrl-f/→ accept command suggestion", "  ↑/↓          choose command suggestion", "  Ctrl-u       clear command; Ctrl-w removes its last word", "  Ctrl-r       reload workspace", "  ?            this help", "  Ctrl-c, :q   quit (or cancel a running request)",
 	}, "\n")
 	if len(m.hotkeys) == 0 {
 		return help

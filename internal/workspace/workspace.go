@@ -251,6 +251,9 @@ func Validate(ws *model.Workspace) []error {
 		if request.Name == "" || request.Method == "" || request.URL == "" {
 			errs = append(errs, ValidationError{Path: request.Path, Message: "name, method, and url are required"})
 		}
+		if request.Body != nil && (len(request.Form) > 0 || len(request.Files) > 0) {
+			errs = append(errs, ValidationError{Path: request.Path, Message: "body cannot be combined with form or files"})
+		}
 		ref := request.Ref()
 		if previous, ok := seenRequests[ref]; ok {
 			errs = append(errs, ValidationError{Path: request.Path, Message: fmt.Sprintf("duplicate request reference %q (also in %s)", ref, previous)})

@@ -273,3 +273,65 @@ func TestHeaderUsesEnvironmentLabel(t *testing.T) {
 		t.Fatalf("header missing Environment label: %q", view)
 	}
 }
+
+func TestJSONHighlighting(t *testing.T) {
+	for _, line := range []string{`  "id": 42,`, `  "name": "Ada",`, `  "active": true`} {
+		if out := highlightJSONLine(line); !strings.Contains(out, "\x1b[") {
+			t.Errorf("expected %q colourised, got %q", line, out)
+		}
+	}
+}
+
+func TestSplitViewFocusAndScroll(t *testing.T) {
+	ws := &model.Workspace{Name: "Demo", Root: "/tmp/demo", Requests: []model.Request{{ID: "users.get", Name: "Get", Method: "GET", URL: "https://x"}}}
+	m := NewModel(context.Background(), "/tmp/demo", "", &app.App{Workspace: ws})
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	m.requestResult = &model.RequestResult{Request: ws.Requests[0], Response: &model.Response{Status: "200 OK", StatusCode: 200, Body: []byte(`{"a":1}`)}}
+	m.overlay, m.focusedPane = responseOverlay, paneResponse
+	if !m.inSplitView() {
+		t.Fatal("expected split view")
+	}
+	_, _ = m.handleKey("tab")
+	if m.focusedPane != paneRequest {
+		t.Fatalf("tab did not focus request: %v", m.focusedPane)
+	}
+	_, _ = m.handleKey("j")
+	if m.requestOffset == 0 {
+		t.Fatal("j did not scroll the request pane")
+	}
+	if m.responseOffset != 0 {
+		t.Fatal("scrolling request should not move response")
+	}
+	_, _ = m.handleKey("l")
+	if m.focusedPane != paneResponse {
+		t.Fatal("l did not focus response")
+	}
+}
+
+func TestAttachWritesFilesToRequest(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "arbor.yaml"), []byte("version: 1\nname: Demo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reqPath := filepath.Join(root, "collections", "up", "post.yaml")
+	if err := os.MkdirAll(filepath.Dir(reqPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(reqPath, []byte("version: 1\nkind: request\nid: up.post\nname: Up\nmethod: POST\nurl: 'https://x'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := app.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewModel(context.Background(), root, "", &app.App{Workspace: loaded.Workspace})
+	m.selected = 0 // up.post
+	_, _ = m.executeCommand("attach document=./files/x.txt")
+	data, err := os.ReadFile(reqPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "files:") || !strings.Contains(string(data), "document: ./files/x.txt") {
+		t.Fatalf("files not written: %s", data)
+	}
+}

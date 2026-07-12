@@ -1,0 +1,18 @@
+version: 1
+kind: request
+id: upload.file
+name: Upload a file
+description: Attach a file (and a text field) as multipart/form-data; httpbin echoes it under files and form.
+method: POST
+url: "{{base_url}}/post"
+
+form:
+  caption: "{{greeting}} from Arbor"
+
+files:
+  document: ./files/hello.txt
+
+assert:
+  - status == 200
+  - body.files.document contains "Arbor"
+  - body.form.caption contains "{{greeting}}"

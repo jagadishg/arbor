@@ -1,0 +1,4 @@
+version: 1
+kind: collection
+name: uploads
+description: multipart/form-data file uploads echoed back by httpbin under files.

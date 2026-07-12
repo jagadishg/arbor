@@ -83,3 +83,12 @@ func write(t *testing.T, root, name, contents string) {
 		t.Fatal(err)
 	}
 }
+
+func TestValidateRejectsBodyWithFiles(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "arbor.yaml", "version: 1\nname: Demo\n")
+	write(t, root, "collections/up/post.yaml", "version: 1\nkind: request\nid: up.post\nname: Up\nmethod: POST\nurl: 'https://x'\nbody:\n  a: 1\nfiles:\n  doc: ./x.txt\n")
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "body cannot be combined with form or files") {
+		t.Fatalf("expected body/files conflict error, got %v", err)
+	}
+}

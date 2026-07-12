@@ -156,3 +156,29 @@ func TestResolveDirMapsWorkspaceName(t *testing.T) {
 		t.Fatalf("resolveDir(\"\") should return cwd, got %q", dir)
 	}
 }
+
+func TestDescribeIncludesFiles(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "demo")
+	var output bytes.Buffer
+	run := func(args ...string) {
+		t.Helper()
+		output.Reset()
+		command := New(Options{Out: &output, ErrOut: &output, Dir: root})
+		command.SetArgs(args)
+		if err := command.ExecuteContext(context.Background()); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+	run("init", "--name", "Demo")
+	reqPath := filepath.Join(root, "collections", "up", "post.yaml")
+	if err := os.MkdirAll(filepath.Dir(reqPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(reqPath, []byte("version: 1\nkind: request\nid: up.post\nname: Up\nmethod: POST\nurl: 'https://x'\nfiles:\n  document: ./f.txt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("describe", "up.post", "--json")
+	if !strings.Contains(output.String(), "\"files\":{\"document\":\"./f.txt\"}") {
+		t.Fatalf("describe --json missing files: %q", output.String())
+	}
+}

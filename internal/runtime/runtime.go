@@ -7,8 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -94,7 +98,7 @@ func BuildRequest(ctx context.Context, definition model.Request, vars *variables
 	}
 	parsed.RawQuery = query.Encode()
 
-	body, contentType, err := encodeBody(definition.Body, vars)
+	body, contentType, err := encodeRequestBody(definition, vars)
 	if err != nil {
 		return nil, err
 	}
@@ -114,6 +118,86 @@ func BuildRequest(ctx context.Context, definition model.Request, vars *variables
 	}
 	request.Header.Set("User-Agent", "arbor/dev")
 	return request, nil
+}
+
+// encodeRequestBody chooses how to encode the request body: multipart/form-data
+// when files are attached, application/x-www-form-urlencoded for form fields
+// alone, otherwise the JSON/text body.
+func encodeRequestBody(definition model.Request, vars *variables.Set) (io.Reader, string, error) {
+	if len(definition.Files) > 0 {
+		return encodeMultipart(definition, vars)
+	}
+	if len(definition.Form) > 0 {
+		return encodeForm(definition.Form, vars)
+	}
+	return encodeBody(definition.Body, vars)
+}
+
+func encodeForm(form map[string]string, vars *variables.Set) (io.Reader, string, error) {
+	values := url.Values{}
+	for _, key := range sortedKeys(form) {
+		resolved, err := vars.Resolve(form[key])
+		if err != nil {
+			return nil, "", fmt.Errorf("resolve form field %q: %w", key, err)
+		}
+		values.Set(key, resolved)
+	}
+	return strings.NewReader(values.Encode()), "application/x-www-form-urlencoded", nil
+}
+
+func encodeMultipart(definition model.Request, vars *variables.Set) (io.Reader, string, error) {
+	var buffer bytes.Buffer
+	writer := multipart.NewWriter(&buffer)
+	for _, key := range sortedKeys(definition.Form) {
+		resolved, err := vars.Resolve(definition.Form[key])
+		if err != nil {
+			return nil, "", fmt.Errorf("resolve form field %q: %w", key, err)
+		}
+		if err := writer.WriteField(key, resolved); err != nil {
+			return nil, "", err
+		}
+	}
+	baseDir := ""
+	if definition.Path != "" {
+		baseDir = filepath.Dir(definition.Path)
+	}
+	for _, field := range sortedKeys(definition.Files) {
+		resolvedPath, err := vars.Resolve(definition.Files[field])
+		if err != nil {
+			return nil, "", fmt.Errorf("resolve file %q: %w", field, err)
+		}
+		path := resolvedPath
+		if !filepath.IsAbs(path) && baseDir != "" {
+			path = filepath.Join(baseDir, path)
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			return nil, "", fmt.Errorf("attach file %q: %w", field, err)
+		}
+		part, err := writer.CreateFormFile(field, filepath.Base(path))
+		if err != nil {
+			file.Close()
+			return nil, "", err
+		}
+		if _, err := io.Copy(part, file); err != nil {
+			file.Close()
+			return nil, "", fmt.Errorf("read file %q: %w", field, err)
+		}
+		file.Close()
+	}
+	if err := writer.Close(); err != nil {
+		return nil, "", err
+	}
+	return &buffer, writer.FormDataContentType(), nil
+}
+
+func sortedKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func encodeBody(body any, vars *variables.Set) (io.Reader, string, error) {
