@@ -408,6 +408,23 @@ func TestResponseInspectorNavigationAndSearch(t *testing.T) {
 	}
 }
 
+func TestCommandBarOpensFromSplitView(t *testing.T) {
+	m := testModel()
+	m.width, m.height = 100, 24
+	m.requestResult = &model.RequestResult{
+		Request:  m.app.Workspace.Requests[0],
+		Response: &model.Response{Status: "200 OK", StatusCode: 200},
+	}
+	m.overlay, m.focusedPane = responseOverlay, paneResponse
+	_, _ = m.handleKey(":")
+	if m.mode != commandMode {
+		t.Fatalf(": did not open command mode from split view: %v", m.mode)
+	}
+	if !strings.Contains(ansi.Strip(m.render()), "▊") {
+		t.Fatal("command prompt was not rendered above split view")
+	}
+}
+
 func TestReadonlyOverlayUsesSearchViewer(t *testing.T) {
 	m := testModel()
 	m.width, m.height = 100, 24

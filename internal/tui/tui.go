@@ -373,7 +373,12 @@ func (m *Model) currentSplitLayout() splitLayout {
 	width := max(m.width, 50)
 	height := max(m.height, 12)
 	header := m.renderHeader(width)
-	return newSplitLayout(width, height-lipgloss.Height(header)-1)
+	bodyHeight := height - lipgloss.Height(header) - 1
+	if m.mode == commandMode {
+		prompt := m.renderPrompt(width)
+		bodyHeight -= lipgloss.Height(prompt) + 1
+	}
+	return newSplitLayout(width, bodyHeight)
 }
 
 func (m *Model) handleSplitKey(key string) (tea.Model, tea.Cmd) {
@@ -452,6 +457,8 @@ func (m *Model) handleSplitKey(key string) (tea.Model, tea.Cmd) {
 		if !m.running {
 			return m, m.runRequest(m.requestResult.Request.Ref())
 		}
+	case ":":
+		m.mode, m.input, m.suggestion = commandMode, "", 0
 	}
 	return m, nil
 }
@@ -1191,7 +1198,13 @@ func (m *Model) render() string {
 	if m.overlay != noOverlay {
 		var body string
 		if m.inSplitView() {
-			body = m.renderSplit(width, height-lipgloss.Height(header)-1)
+			bodyHeight := height - lipgloss.Height(header) - 1
+			if m.mode == commandMode {
+				prompt := m.renderPrompt(width)
+				body = prompt + "\n" + m.renderSplit(width, bodyHeight-lipgloss.Height(prompt)-1)
+			} else {
+				body = m.renderSplit(width, bodyHeight)
+			}
 		} else {
 			body = m.renderOverlay(width, height-lipgloss.Height(header)-1)
 		}
