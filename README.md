@@ -32,7 +32,13 @@ Arbor brings the speed and familiarity of k9s to API development. Browse collect
 
 ## Installation
 
-Install with Go:
+Install with Homebrew (macOS):
+
+```bash
+brew install jagadishg/tap/arbor
+```
+
+Or install with Go:
 
 ```bash
 go install github.com/jagadishg/arbor/cmd/arbor@latest

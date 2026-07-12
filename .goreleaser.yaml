@@ -34,6 +34,29 @@ archives:
         formats:
           - zip
 
+homebrew_casks:
+  - name: arbor
+    binaries:
+      - arbor
+    repository:
+      owner: jagadishg
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: "https://github.com/jagadishg/arbor"
+    description: "Terminal-native, local-first API workspace"
+    url:
+      verified: "github.com/jagadishg/arbor/"
+    commit_author:
+      name: goreleaser-bot
+      email: goreleaser@users.noreply.github.com
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/arbor"]
+          end
+    skip_upload: auto
+
 checksum:
   name_template: checksums.txt
 
