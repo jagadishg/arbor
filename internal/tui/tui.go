@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -103,6 +104,11 @@ type viewLocation struct {
 
 type requestDoneMsg model.RequestResult
 type requestTickMsg time.Time
+
+type clipboardResultMsg struct {
+	what string
+	err  error
+}
 
 const requestRefreshInterval = 100 * time.Millisecond
 
@@ -262,6 +268,12 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.message = "Editor failed: " + msg.err.Error()
 		} else {
 			return m, m.reloadCmd()
+		}
+	case clipboardResultMsg:
+		if msg.err != nil {
+			m.message = "Copy failed: " + msg.err.Error()
+		} else {
+			m.message = msg.what + " copied to clipboard"
 		}
 	case workspaceSwitchedMsg:
 		if msg.err != nil {
@@ -477,25 +489,76 @@ func (m *Model) handleSplitKey(key string) (tea.Model, tea.Cmd) {
 // a curl command (request pane) to the clipboard, respecting the reveal toggle
 // for secrets in the curl.
 func (m *Model) copyFromFocusedPane() tea.Cmd {
+	content, what, ok := m.copyTarget()
+	if !ok {
+		m.message = what
+		return nil
+	}
+	return copyToClipboard(content, what)
+}
+
+// copyTarget returns the clipboard content and a description for the focused
+// pane. When there is nothing to copy, ok is false and what holds the reason to
+// show the user.
+func (m *Model) copyTarget() (content, what string, ok bool) {
 	if m.focusedPane == paneRequest {
 		sent := m.requestResult.Sent
 		if sent == nil {
-			m.message = "Nothing to copy yet"
-			return nil
+			return "", "Nothing to copy yet", false
 		}
+		what = "Request curl (secrets redacted; press x to reveal)"
 		if m.revealSecrets {
-			m.message = "Request copied as curl (secrets revealed)"
-		} else {
-			m.message = "Request copied as curl (secrets redacted; press x to reveal)"
+			what = "Request curl (secrets revealed)"
 		}
-		return tea.SetClipboard(curlCommand(sent, m.revealSecrets))
+		return curlCommand(sent, m.revealSecrets), what, true
 	}
 	if m.requestResult.Response == nil {
-		m.message = "No response body to copy"
-		return nil
+		return "", "No response body to copy", false
 	}
-	m.message = "Response body copied to clipboard"
-	return tea.SetClipboard(string(m.requestResult.Response.Body))
+	return string(m.requestResult.Response.Body), "Response body", true
+}
+
+// copyToClipboard writes content to the system clipboard. It prefers the local
+// clipboard utility (pbcopy/xclip/…) because iTerm2 and others disable OSC52
+// clipboard writes by default; when no utility is available (e.g. a headless or
+// SSH session) it falls back to OSC52, which routes to the local terminal.
+func copyToClipboard(content, what string) tea.Cmd {
+	name, args, ok := clipboardCommand()
+	if !ok {
+		return tea.Sequence(tea.SetClipboard(content), func() tea.Msg { return clipboardResultMsg{what: what} })
+	}
+	return func() tea.Msg {
+		command := exec.Command(name, args...)
+		command.Stdin = strings.NewReader(content)
+		return clipboardResultMsg{what: what, err: command.Run()}
+	}
+}
+
+// clipboardCommand returns the platform clipboard utility that reads from stdin,
+// if one is installed.
+func clipboardCommand() (string, []string, bool) {
+	lookup := func(name string, args ...string) (string, []string, bool) {
+		if path, err := exec.LookPath(name); err == nil {
+			return path, args, true
+		}
+		return "", nil, false
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		return lookup("pbcopy")
+	case "windows":
+		return lookup("clip")
+	default:
+		if os.Getenv("WAYLAND_DISPLAY") != "" {
+			if path, args, ok := lookup("wl-copy"); ok {
+				return path, args, ok
+			}
+		}
+		if path, args, ok := lookup("xclip", "-selection", "clipboard"); ok {
+			return path, args, ok
+		}
+		return lookup("xsel", "--clipboard", "--input")
+	}
 }
 
 func (m *Model) editRequestInView() tea.Cmd {

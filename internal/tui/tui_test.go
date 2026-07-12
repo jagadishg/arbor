@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -407,32 +406,31 @@ func TestSplitViewCopyFollowsFocusedPane(t *testing.T) {
 	}
 	m.overlay = responseOverlay
 
-	clip := func(cmd tea.Cmd) string {
-		if cmd == nil {
-			return ""
-		}
-		return fmt.Sprintf("%v", cmd())
-	}
-
-	// Response pane focused: c copies the raw response body.
+	// Response pane focused: copy the raw response body.
 	m.focusedPane = paneResponse
-	if _, cmd := m.handleKey("c"); clip(cmd) != `{"id":1}` {
-		t.Fatalf("c on response pane did not copy body, got %q", clip(cmd))
+	if content, _, ok := m.copyTarget(); !ok || content != `{"id":1}` {
+		t.Fatalf("response pane copy target = %q (ok=%v), want response body", content, ok)
 	}
 
-	// Request pane focused: c copies a redacted curl.
+	// Request pane focused: copy a redacted curl.
 	m.focusedPane = paneRequest
-	_, cmd := m.handleKey("c")
-	curl := clip(cmd)
-	if !strings.HasPrefix(curl, "curl ") || strings.Contains(curl, "s3cr3t") {
-		t.Fatalf("c on request pane did not copy redacted curl, got %q", curl)
+	content, _, ok := m.copyTarget()
+	if !ok || !strings.HasPrefix(content, "curl ") || strings.Contains(content, "s3cr3t") {
+		t.Fatalf("request pane copy target = %q (ok=%v), want redacted curl", content, ok)
 	}
 
 	// After revealing secrets, the curl includes real values.
 	_, _ = m.handleKey("x")
-	_, cmd = m.handleKey("c")
-	if !strings.Contains(clip(cmd), "Bearer s3cr3t") {
-		t.Fatalf("c after reveal should include secret, got %q", clip(cmd))
+	if content, _, _ := m.copyTarget(); !strings.Contains(content, "Bearer s3cr3t") {
+		t.Fatalf("copy target after reveal = %q, want secret included", content)
+	}
+}
+
+func TestClipboardCommandPrefersLocalUtility(t *testing.T) {
+	// On the test host a local clipboard utility should be found so copies do
+	// not depend on OSC52, which terminals such as iTerm2 block by default.
+	if _, _, ok := clipboardCommand(); !ok {
+		t.Skip("no local clipboard utility on this host")
 	}
 }
 
