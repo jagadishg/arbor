@@ -98,7 +98,7 @@ func TestViewUsesResourceTableAndK9sHints(t *testing.T) {
 	m := testModel()
 	_, _ = m.Update(tea.WindowSizeMsg{Width: 110, Height: 32})
 	view := m.View().Content
-	for _, expected := range []string{"ARBOR", "Workspace:", "requests(all)[2]", "NAME", "METHOD", "[j/k] move"} {
+	for _, expected := range []string{"Workspace:", "requests(all)[2]", "NAME", "METHOD", "[j/k] move"} {
 		if !strings.Contains(view, expected) {
 			t.Errorf("view missing %q", expected)
 		}
@@ -276,7 +276,7 @@ func TestHeaderUsesEnvironmentLabel(t *testing.T) {
 		t.Fatalf("header missing Environment label: %q", view)
 	}
 	header := ansi.Strip(m.renderHeader(110))
-	if !strings.Contains(header, "SHORTCUTS") || !strings.Contains(header, "____") || strings.Contains(header, "│") {
+	if strings.Contains(header, "SHORTCUTS") || !strings.Contains(header, "[j/k]") || !strings.Contains(header, "____") || strings.Contains(header, "│") {
 		t.Fatalf("header missing shortcut panel or ASCII logo: %q", header)
 	}
 }

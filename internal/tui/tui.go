@@ -1299,7 +1299,7 @@ func (m *Model) renderHeader(width int) string {
 }
 
 func (m *Model) renderStructuredHeader(width int) string {
-	label := lipgloss.NewStyle().Foreground(blue).Bold(true)
+	label := lipgloss.NewStyle().Foreground(red).Bold(true)
 	brand := lipgloss.NewStyle().Foreground(blue).Bold(true)
 	value := lipgloss.NewStyle().Foreground(foreground)
 	accent := lipgloss.NewStyle().Foreground(green).Bold(true)
@@ -1321,12 +1321,12 @@ func (m *Model) renderStructuredHeader(width int) string {
 	infoWidth := min(48, max(36, width/3))
 	shortcutWidth := max(28, leftWidth-infoWidth-1)
 	shortcuts := strings.Split(wrap(m.contextualShortcuts(), max(10, shortcutWidth)), "\n")
-	shortcutLines := append([]string{"SHORTCUTS"}, shortcuts...)
+	shortcutLines := shortcuts
 	workspace := truncate(m.app.Workspace.Name, max(10, infoWidth-14))
 	environment := firstOr(m.environment, "none")
 	resources := fmt.Sprintf("%d requests · %d scenarios · %d environments", len(m.app.Workspace.Requests), len(m.app.Workspace.Scenarios), len(m.app.Workspace.Environments))
 	info := []string{
-		brand.Render("ARBOR") + "  " + label.Render("Workspace:") + " " + value.Render(workspace),
+		label.Render("Workspace:") + " " + value.Render(workspace),
 		label.Render("Environment:") + " " + accent.Render(environment),
 		label.Render("View:") + " " + accent.Render(m.section.String()),
 		label.Render("Resources:") + " " + value.Render(resources),
@@ -1351,7 +1351,7 @@ func (m *Model) renderStructuredHeader(width int) string {
 
 func highlightShortcutLine(line string) string {
 	base := lipgloss.NewStyle().Foreground(foreground)
-	key := lipgloss.NewStyle().Foreground(yellow).Bold(true)
+	key := lipgloss.NewStyle().Foreground(red).Bold(true)
 	var out strings.Builder
 	for len(line) > 0 {
 		start := strings.IndexByte(line, '[')
