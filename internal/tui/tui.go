@@ -1261,45 +1261,7 @@ func (m *Model) renderPrompt(width int) string {
 }
 
 func (m *Model) renderHeader(width int) string {
-	return m.renderStructuredHeader(width)
-	if false {
-		if width < 78 {
-			return lipgloss.NewStyle().Background(panel).Width(width).Render(" ARBOR  workspace: " + truncate(m.app.Workspace.Name, max(10, width-30)) + "  env: " + firstOr(m.environment, "none"))
-		}
-
-		leftWidth := max(34, width-34)
-
-		rows := []string{
-			"ARBOR Workspace: " + m.app.Workspace.Name,
-			"Root:      " + m.app.Workspace.Root,
-			"Environment: " + firstOr(m.environment, "none"),
-			fmt.Sprintf("Resources: %d requests · %d scenarios · %d environments", len(m.app.Workspace.Requests), len(m.app.Workspace.Scenarios), len(m.app.Workspace.Environments)),
-			"Arbor Rev: " + buildinfo.Version,
-		}
-
-		logo := []string{
-			"    _    ____  ____   ___  ____",
-			"   / \\  |  _ \\| __ ) / _ \\|  _ \\",
-			"  / _ \\ | |_) |  _ \\| | | | |_) |",
-			" / ___ \\|  _ <| |_) | |_| |  _ <",
-			"/_/   \\_\\_| \\_\\____/ \\___/|_| \\_\\",
-		}
-
-		lines := make([]string, 0, len(rows))
-
-		for index, row := range rows {
-			left := lipgloss.NewStyle().Foreground(yellow).Render(truncate(row, leftWidth))
-			right := lipgloss.NewStyle().Foreground(green).Bold(true).Render(logo[index])
-			lines = append(lines, left+strings.Repeat(" ", max(1, width-lipgloss.Width(left)-lipgloss.Width(right)))+right)
-		}
-
-		return lipgloss.NewStyle().Background(panel).Width(width).Render(strings.Join(lines, "\n"))
-	}
-	return ""
-}
-
-func (m *Model) renderStructuredHeader(width int) string {
-	label := lipgloss.NewStyle().Foreground(red).Bold(true)
+	label := lipgloss.NewStyle().Foreground(yellow).Bold(true)
 	brand := lipgloss.NewStyle().Foreground(blue).Bold(true)
 	value := lipgloss.NewStyle().Foreground(foreground)
 	accent := lipgloss.NewStyle().Foreground(green).Bold(true)
@@ -1318,7 +1280,7 @@ func (m *Model) renderStructuredHeader(width int) string {
 	}
 	logoWidth := 34
 	leftWidth := width - logoWidth - 2
-	infoWidth := min(48, max(36, width/3))
+	infoWidth := min(60, max(36, width/3))
 	shortcutWidth := max(28, leftWidth-infoWidth-1)
 	shortcuts := strings.Split(wrap(m.contextualShortcuts(), max(10, shortcutWidth)), "\n")
 	shortcutLines := shortcuts
@@ -1351,7 +1313,7 @@ func (m *Model) renderStructuredHeader(width int) string {
 
 func highlightShortcutLine(line string) string {
 	base := lipgloss.NewStyle().Foreground(foreground)
-	key := lipgloss.NewStyle().Foreground(red).Bold(true)
+	key := lipgloss.NewStyle().Foreground(yellow).Bold(true)
 	var out strings.Builder
 	for len(line) > 0 {
 		start := strings.IndexByte(line, '[')
