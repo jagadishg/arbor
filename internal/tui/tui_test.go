@@ -261,7 +261,7 @@ func TestWorkspaceSwitchReloadsAndResets(t *testing.T) {
 	if m.app.Workspace.Name != "beta" {
 		t.Fatalf("workspace not switched: %q", m.app.Workspace.Name)
 	}
-	if m.section != requestsSection || m.scope != "" {
+	if m.section != collectionsSection || m.scope != "" {
 		t.Fatalf("state not reset after switch: section=%s scope=%q", m.section, m.scope)
 	}
 }

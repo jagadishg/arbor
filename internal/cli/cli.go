@@ -70,8 +70,21 @@ func New(options Options) *cobra.Command {
 	root.SetErr(options.ErrOut)
 	root.PersistentFlags().StringVarP(&environment, "env", "e", "", "environment to use")
 	root.PersistentFlags().StringVarP(&workspaceName, "workspace", "w", "", "registered workspace to target")
-	root.AddCommand(initCommand(options), newCommand(options), registerCommand(options), workspacesCommand(options), unregisterCommand(options), validateCommand(options), listCommand(options), describeCommand(options, &environment), runCommand(options, &environment), scenarioCommand(options, &environment), secretCommand(options, &environment))
+	root.AddCommand(initCommand(options), newCommand(options), registerCommand(options), workspacesCommand(options), unregisterCommand(options), configCommand(options), validateCommand(options), listCommand(options), describeCommand(options, &environment), runCommand(options, &environment), scenarioCommand(options, &environment), secretCommand(options, &environment))
 	return root
+}
+
+func configCommand(options Options) *cobra.Command {
+	command := &cobra.Command{Use: "config", Short: "Show Arbor's central configuration"}
+	command.AddCommand(&cobra.Command{Use: "path", Short: "Print the central config file path", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
+		path, err := config.Path()
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(options.Out, path)
+		return nil
+	}})
+	return command
 }
 
 // resolveDir maps the --workspace flag to a directory: a registered workspace's

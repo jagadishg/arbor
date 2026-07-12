@@ -201,8 +201,9 @@ The command exits non-zero when transport, extraction, or assertion failures occ
 Each API project is its own workspace (its own `arbor.yaml`, collections, and environments).
 Arbor keeps a central registry — like k9s remembering your clusters — so you can hop between
 projects without caring which directory you launched from. It lives at
-`$XDG_CONFIG_HOME/arbor/config.yaml` (or the OS-standard config dir; override with
-`ARBOR_CONFIG`).
+`$XDG_CONFIG_HOME/arbor/config.yaml` on Linux and
+`~/Library/Application Support/arbor/config.yaml` on macOS (override with `ARBOR_CONFIG`). Run
+`arbor config path` to print the exact location.
 
 ```text
 ~/apis/
@@ -236,6 +237,7 @@ arbor init                         Initialize a workspace
 arbor register [dir]               Register a workspace (defaults to cwd)
 arbor workspaces                   List registered workspaces
 arbor unregister <name>            Remove a workspace from the registry
+arbor config path                  Print the central config file location
 arbor new request <ref>            Create a request
 arbor new collection <name>        Create a collection
 arbor new environment <name>       Create an environment

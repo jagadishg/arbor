@@ -192,7 +192,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.app, m.dir = msg.app, msg.dir
 			m.aliases, m.hotkeys, m.workspaces = msg.aliases, msg.hotkeys, msg.workspaces
 			m.environment = m.app.Workspace.DefaultEnv
-			m.section, m.scope, m.filter, m.selected = requestsSection, "", "", 0
+			m.section, m.scope, m.filter, m.selected = collectionsSection, "", "", 0
 			m.history, m.forward = nil, nil
 			m.overlay, m.overlayOffset, m.requestResult, m.scenarioReport = noOverlay, 0, nil, nil
 			m.message = "Switched to " + m.app.Workspace.Name
@@ -522,7 +522,9 @@ func (m *Model) switchToSelectedWorkspace() tea.Cmd {
 	}
 	if entry, ok := items[m.selected].value.(config.Entry); ok {
 		if entry.Path == m.app.Workspace.Root {
-			m.message = "Already in " + entry.Name
+			// Already the active workspace — drill into its collections.
+			m.navigate(collectionsSection, "", "")
+			m.message = "Viewing " + entry.Name
 			return nil
 		}
 		m.message = "Switching to " + entry.Name + "…"
