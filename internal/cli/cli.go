@@ -113,9 +113,19 @@ func resolveTUITarget(options Options, workspaceName string) (string, error) {
 	if root, err := workspace.FindRoot(options.Dir); err == nil {
 		return root, nil
 	}
-	if cfg, err := config.Load(); err == nil && cfg.LastWorkspace != "" {
-		if _, err := os.Stat(filepath.Join(cfg.LastWorkspace, workspace.ConfigName)); err == nil {
-			return cfg.LastWorkspace, nil
+	if cfg, err := config.Load(); err == nil {
+		if cfg.LastWorkspace != "" {
+			if _, err := os.Stat(filepath.Join(cfg.LastWorkspace, workspace.ConfigName)); err == nil {
+				return cfg.LastWorkspace, nil
+			}
+		}
+		// Fall back to any still-valid registered workspace, so an upgrade that
+		// left lastWorkspace unset — or a stale last-used path — still opens the
+		// registry instead of erroring out.
+		for _, entry := range cfg.Workspaces {
+			if _, err := os.Stat(filepath.Join(entry.Path, workspace.ConfigName)); err == nil {
+				return entry.Path, nil
+			}
 		}
 	}
 	return "", errors.New("no workspace here — run 'arbor init', 'arbor register <dir>', or open one you've used before")

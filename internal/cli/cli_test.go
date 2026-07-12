@@ -157,6 +157,27 @@ func TestResolveDirMapsWorkspaceName(t *testing.T) {
 	}
 }
 
+func TestResolveTUITargetFallsBackToRegisteredWorkspace(t *testing.T) {
+	t.Setenv("ARBOR_CONFIG", filepath.Join(t.TempDir(), "config.yaml"))
+	root := filepath.Join(t.TempDir(), "demo")
+	if err := initialize(root, "Demo"); err != nil {
+		t.Fatal(err)
+	}
+	// Register the workspace but leave LastWorkspace unset — the state a config
+	// upgrade (or a never-recorded last-used) leaves behind.
+	cfg, _ := config.Load()
+	cfg.Register(root, "Demo")
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	// From a directory with no workspace, the TUI should still open the registry
+	// rather than error with "no workspace here".
+	dir, err := resolveTUITarget(Options{Dir: t.TempDir()}, "")
+	if err != nil || dir != root {
+		t.Fatalf("resolveTUITarget = %q, %v; want %q", dir, err, root)
+	}
+}
+
 func TestDescribeIncludesFiles(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "demo")
 	var output bytes.Buffer
