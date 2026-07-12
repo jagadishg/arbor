@@ -275,6 +275,10 @@ func TestHeaderUsesEnvironmentLabel(t *testing.T) {
 	if view := m.View().Content; !strings.Contains(view, "Environment:") {
 		t.Fatalf("header missing Environment label: %q", view)
 	}
+	header := ansi.Strip(m.renderHeader(110))
+	if !strings.Contains(header, "SHORTCUTS") || !strings.Contains(header, "____") {
+		t.Fatalf("header missing shortcut panel or ASCII logo: %q", header)
+	}
 }
 
 func TestJSONHighlighting(t *testing.T) {

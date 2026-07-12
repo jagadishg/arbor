@@ -1303,16 +1303,58 @@ func (m *Model) renderStructuredHeader(width int) string {
 	brand := lipgloss.NewStyle().Foreground(blue).Bold(true)
 	value := lipgloss.NewStyle().Foreground(foreground)
 	accent := lipgloss.NewStyle().Foreground(green).Bold(true)
-	workspace := truncate(m.app.Workspace.Name, max(10, width/4))
+	if width < 90 {
+		line1 := " " + brand.Render("ARBOR") + "  " + label.Render("Workspace:") + " " + value.Render(truncate(m.app.Workspace.Name, max(10, width/4))) + "  " + label.Render("Env:") + " " + accent.Render(firstOr(m.environment, "none"))
+		line2 := " " + label.Render("View:") + " " + accent.Render(m.section.String()) + "  " + label.Render("Keys:") + " " + value.Render(truncate(m.contextualShortcuts(), max(10, width-16)))
+		return lipgloss.NewStyle().Background(panel).Width(width).Render(line1 + "\n" + line2)
+	}
+
+	logo := []string{
+		`    _    ____  ____   ___  ____`,
+		`   / \  |  _ \| __ ) / _ \|  _ \`,
+		`  / _ \ | |_) |  _ \| | | | |_) |`,
+		` / ___ \|  _ <| |_) | |_| |  _ <`,
+		`/_/   \_\_| \_\____/ \___/|_| \_\`,
+	}
+	logoWidth := 34
+	rightWidth := max(30, width/3)
+	centerWidth := max(24, width-logoWidth-rightWidth-2)
+	shortcuts := strings.Split(wrap(m.contextualShortcuts(), max(10, rightWidth-2)), "\n")
+	shortcutLines := append([]string{"SHORTCUTS"}, shortcuts...)
+	workspace := truncate(m.app.Workspace.Name, max(10, centerWidth-14))
 	environment := firstOr(m.environment, "none")
 	resources := fmt.Sprintf("%d requests · %d scenarios · %d environments", len(m.app.Workspace.Requests), len(m.app.Workspace.Scenarios), len(m.app.Workspace.Environments))
-	line1 := " " + brand.Render("ARBOR") + "  " + label.Render("Workspace:") + " " + value.Render(workspace) + "  " + label.Render("Environment:") + " " + accent.Render(environment)
-	line2 := " " + label.Render("View:") + " " + accent.Render(m.section.String())
-	if m.scope != "" {
-		line2 += " " + label.Render("Scope:") + " " + value.Render(m.scope)
+	info := []string{
+		"ARBOR  Workspace: " + workspace,
+		"Environment: " + environment,
+		"View: " + m.section.String(),
+		"Resources: " + resources,
+		"Rev: " + buildinfo.Version,
 	}
-	line2 += "  " + label.Render("Resources:") + " " + value.Render(resources) + "  " + label.Render("Rev:") + " " + value.Render(buildinfo.Version)
-	return lipgloss.NewStyle().Background(panel).Width(width).Render(line1 + "\n" + line2)
+	rows := make([]string, 0, len(logo))
+	for index := range logo {
+		logoCell := lipgloss.NewStyle().Foreground(green).Bold(true).Render(logo[index])
+		infoStyle := value
+		if index == 0 {
+			infoStyle = label
+		}
+		infoCell := infoStyle.Render(truncate(info[index], centerWidth))
+		shortcutCell := ""
+		if index < len(shortcutLines) {
+			shortcutStyle := value
+			if index == 0 {
+				shortcutStyle = label
+			}
+			shortcutCell = shortcutStyle.Render(truncate(shortcutLines[index], rightWidth-2))
+		}
+		rows = append(rows, fitHeaderCell(logoCell, logoWidth)+"│"+fitHeaderCell(infoCell, centerWidth)+"│"+fitHeaderCell(shortcutCell, rightWidth))
+	}
+	return lipgloss.NewStyle().Background(panel).Width(width).Render(strings.Join(rows, "\n"))
+}
+
+func fitHeaderCell(value string, width int) string {
+	value = ansi.Truncate(value, max(0, width), "…")
+	return value + strings.Repeat(" ", max(0, width-lipgloss.Width(value)))
 }
 
 func (m *Model) renderTable(width, height int) string {
