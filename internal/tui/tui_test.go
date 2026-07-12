@@ -411,6 +411,28 @@ func TestSplitViewFitsBelowHeader(t *testing.T) {
 	}
 }
 
+func TestResponseBodyWithCRLFKeepsBordersIntact(t *testing.T) {
+	m := testModel()
+	m.width, m.height = 120, 24
+	body := "<html>\r\n<head><title>503 Service Temporarily Unavailable</title></head>\r\n<body>\r\n</body>\r\n</html>\r\n"
+	m.requestResult = &model.RequestResult{
+		Request:  m.app.Workspace.Requests[0],
+		Response: &model.Response{Status: "503 Service Unavailable", StatusCode: 503, Headers: map[string][]string{"Content-Type": {"text/html"}}, Body: []byte(body), Size: int64(len(body))},
+	}
+	m.overlay, m.focusedPane = responseOverlay, paneResponse
+
+	split := m.renderSplit(m.width, 20)
+	if strings.ContainsRune(split, '\r') {
+		t.Fatal("rendered split view still contains a carriage return")
+	}
+	rows := strings.Split(split, "\n")
+	for _, row := range rows {
+		if w := lipgloss.Width(row); w != m.width {
+			t.Fatalf("split row width %d != %d (border broken): %q", w, m.width, ansi.Strip(row))
+		}
+	}
+}
+
 func TestRunRequestOpensLiveSplitView(t *testing.T) {
 	ws := &model.Workspace{Name: "Demo", Root: "/tmp/demo", Requests: []model.Request{{ID: "users.get", Name: "Get", Method: "GET", URL: "https://x"}}}
 	m := NewModel(context.Background(), "/tmp/demo", "", &app.App{Workspace: ws})

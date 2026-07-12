@@ -2317,6 +2317,7 @@ func formatBody(body []byte, width int) string {
 	return wrap(string(body), width)
 }
 func wrap(value string, width int) string {
+	value = sanitizeText(value)
 	if width < 10 {
 		return value
 	}
@@ -2330,6 +2331,28 @@ func wrap(value string, width int) string {
 		lines = append(lines, line)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// sanitizeText normalises line endings and removes control characters that would
+// corrupt the pane borders when drawn — carriage returns move the cursor back to
+// column 0, and stray escape sequences from a response body could inject terminal
+// codes. Newlines are preserved so wrap can split on them; tabs become spaces so
+// widths stay predictable.
+func sanitizeText(value string) string {
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	value = strings.ReplaceAll(value, "\r", "\n")
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n':
+			return r
+		case r == '\t':
+			return ' '
+		case r < 0x20 || r == 0x7f:
+			return -1
+		default:
+			return r
+		}
+	}, value)
 }
 func truncate(value string, width int) string {
 	runes := []rune(value)
