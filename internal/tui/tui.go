@@ -355,7 +355,7 @@ func (m *Model) handleKey(key string) (tea.Model, tea.Cmd) {
 	case "e":
 		return m, m.editSelected()
 	case "/":
-		m.mode, m.filterSave, m.input, m.suggestion = filterMode, m.filter, m.filter, 0
+		m.mode, m.filterSave, m.input, m.suggestion = filterMode, m.filter, "", 0
 	case ":":
 		m.mode, m.input, m.suggestion = commandMode, "", 0
 	case "?":
@@ -1185,7 +1185,7 @@ func (m *Model) items() []item {
 	}
 	filtered := values[:0]
 	for _, value := range values {
-		if fuzzyMatch(strings.ToLower(m.itemSearchText(value)), strings.ToLower(m.filter)) {
+		if strings.Contains(strings.ToLower(m.itemSearchText(value)), strings.ToLower(m.filter)) {
 			filtered = append(filtered, value)
 		}
 	}
@@ -1484,7 +1484,7 @@ func (m *Model) tableHeader(width int) string {
 	switch m.section {
 	case requestsSection:
 		nameWidth, urlWidth := m.requestColumnWidths(width)
-		line := fmt.Sprintf("  %-*s %-8s %-*s %s", nameWidth, "NAME", "METHOD", urlWidth, "URL", "A")
+		line := fmt.Sprintf("  %-*s %-8s %-*s", nameWidth, "NAME", "METHOD", urlWidth, "URL")
 		if m.wide {
 			line += " FILE"
 		}
@@ -1512,7 +1512,7 @@ func (m *Model) tableRow(index int, item item, width int) string {
 	switch value := item.value.(type) {
 	case model.Request:
 		nameWidth, urlWidth := m.requestColumnWidths(width)
-		line := fmt.Sprintf("%s%-*s %-8s %-*s %d", prefix, nameWidth, truncate(value.Ref(), nameWidth), methodStyle(value.Method).Render(strings.ToUpper(value.Method)), urlWidth, truncate(value.URL, urlWidth), len(value.Assert))
+		line := fmt.Sprintf("%s%-*s %-8s %-*s", prefix, nameWidth, truncate(value.Ref(), nameWidth), methodStyle(value.Method).Render(strings.ToUpper(value.Method)), urlWidth, truncate(value.URL, urlWidth))
 		if m.wide {
 			line += " " + truncate(relative(m.app.Workspace.Root, value.Path), 18)
 		}
@@ -2318,7 +2318,7 @@ func (m *Model) renderTabs(width int) string {
 func (m *Model) tableHeight() int { return max(1, m.height-5) }
 func (m *Model) modalHeight() int { return min(max(10, m.height-6), m.height-4) }
 func (m *Model) requestColumnWidths(width int) (int, int) {
-	nameWidth := min(28, max(16, width/3))
+	nameWidth := min(50, max(16, width/3))
 	reserved := 14
 	if m.wide {
 		reserved += 19
