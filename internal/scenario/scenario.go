@@ -29,8 +29,8 @@ func (r *Runner) Run(ctx context.Context, ws *model.Workspace, definition model.
 			continue
 		}
 		result := model.RequestResult{Request: request, Extracted: map[string]string{}}
-		response, err := r.Executor.Execute(ctx, request, current)
-		result.Response, result.Error = response, err
+		response, sent, err := r.Executor.Execute(ctx, request, current)
+		result.Response, result.Sent, result.Error = response, sent, err
 		if err == nil {
 			expressions := append(append([]string{}, request.Assert...), step.Assert...)
 			result.Assertions = assertions.EvaluateAll(expressions, response, current)

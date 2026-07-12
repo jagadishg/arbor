@@ -33,7 +33,7 @@ func TestExecute(t *testing.T) {
 	ws := &model.Workspace{Variables: map[string]string{"base_url": server.URL, "token": "secret", "name": "Ada"}}
 	vars, _ := variables.New(ws, nil, nil, nil)
 	definition := model.Request{Method: "POST", URL: "{{base_url}}/users", Query: map[string]string{"expand": "profile"}, Headers: map[string]string{"Authorization": "Bearer {{token}}"}, Body: map[string]any{"name": "{{name}}"}}
-	response, err := (&Executor{Client: server.Client()}).Execute(context.Background(), definition, vars)
+	response, _, err := (&Executor{Client: server.Client()}).Execute(context.Background(), definition, vars)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestMultipartUpload(t *testing.T) {
 	def := model.Request{Method: "POST", URL: "{{base_url}}/post", Path: filepath.Join(dir, "req.yaml"),
 		Form:  map[string]string{"caption": "{{greeting}} there"},
 		Files: map[string]string{"document": "./hello.txt"}}
-	if _, err := (&Executor{Client: server.Client()}).Execute(context.Background(), def, vars); err != nil {
+	if _, _, err := (&Executor{Client: server.Client()}).Execute(context.Background(), def, vars); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(gotType, "multipart/form-data") {
@@ -91,7 +91,7 @@ func TestFormURLEncoded(t *testing.T) {
 	ws := &model.Workspace{Variables: map[string]string{"base_url": server.URL}}
 	vars, _ := variables.New(ws, nil, nil, nil)
 	def := model.Request{Method: "POST", URL: "{{base_url}}/f", Form: map[string]string{"q": "hi"}}
-	if _, err := (&Executor{Client: server.Client()}).Execute(context.Background(), def, vars); err != nil {
+	if _, _, err := (&Executor{Client: server.Client()}).Execute(context.Background(), def, vars); err != nil {
 		t.Fatal(err)
 	}
 	if gotType != "application/x-www-form-urlencoded" || gotValue != "hi" {
@@ -106,5 +106,61 @@ func TestMissingFileErrors(t *testing.T) {
 		Files: map[string]string{"x": "./nope.txt"}}
 	if _, err := BuildRequest(context.Background(), def, vars); err == nil {
 		t.Fatal("expected error for missing file")
+	}
+}
+
+type fakeSecrets map[string]string
+
+func (f fakeSecrets) Resolve(reference string) (string, error) { return f[reference], nil }
+
+func TestSnapshotRequestRedactsSecrets(t *testing.T) {
+	ws := &model.Workspace{Variables: map[string]string{"base_url": "https://api.example.com", "name": "Ada"}}
+	env := &model.Environment{Secrets: map[string]string{"token": "secret://token"}}
+	vars, err := variables.New(ws, env, nil, fakeSecrets{"secret://token": "s3cr3t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := model.Request{Method: "post", URL: "{{base_url}}/users", Query: map[string]string{"expand": "profile"},
+		Headers: map[string]string{"Authorization": "Bearer {{token}}"}, Body: map[string]any{"name": "{{name}}"}}
+	request, err := BuildRequest(context.Background(), def, vars)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent := SnapshotRequest(def, request, vars)
+	if sent.Method != "POST" {
+		t.Fatalf("method = %q", sent.Method)
+	}
+	if got := sent.Headers["Authorization"]; len(got) != 1 || got[0] != "Bearer s3cr3t" {
+		t.Fatalf("headers not captured unredacted: %#v", sent.Headers)
+	}
+	if sent.Body != `{"name":"Ada"}` {
+		t.Fatalf("body = %q", sent.Body)
+	}
+	redacted := sent.Redact(strings.Join(sent.Headers["Authorization"], ""))
+	if strings.Contains(redacted, "s3cr3t") || !strings.Contains(redacted, "••••••") {
+		t.Fatalf("redaction failed: %q", redacted)
+	}
+}
+
+func TestSnapshotRequestMultipartSummary(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("file body"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ws := &model.Workspace{Variables: map[string]string{"greeting": "hello"}}
+	vars, _ := variables.New(ws, nil, nil, nil)
+	def := model.Request{Method: "POST", URL: "https://example.com/post", Path: filepath.Join(dir, "req.yaml"),
+		Form:  map[string]string{"caption": "{{greeting}} there"},
+		Files: map[string]string{"document": "./hello.txt"}}
+	request, err := BuildRequest(context.Background(), def, vars)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent := SnapshotRequest(def, request, vars)
+	if !strings.Contains(sent.Body, "caption: hello there") || !strings.Contains(sent.Body, "document: @./hello.txt (file)") {
+		t.Fatalf("multipart summary = %q", sent.Body)
+	}
+	if strings.Contains(sent.Body, "file body") {
+		t.Fatalf("multipart body should not include raw file contents: %q", sent.Body)
 	}
 }

@@ -315,6 +315,50 @@ func TestSplitViewFocusAndScroll(t *testing.T) {
 	}
 }
 
+func TestRequestPaneShowsSentAndTogglesRevealAndDefinition(t *testing.T) {
+	ws := &model.Workspace{Name: "Demo", Root: "/tmp/demo", Requests: []model.Request{{ID: "users.get", Name: "Get", Method: "GET", URL: "{{base_url}}/me"}}}
+	m := NewModel(context.Background(), "/tmp/demo", "", &app.App{Workspace: ws})
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	m.requestResult = &model.RequestResult{
+		Request: ws.Requests[0],
+		Sent: &model.SentRequest{
+			Method:  "GET",
+			URL:     "https://api.example.com/me",
+			Headers: map[string][]string{"Authorization": {"Bearer s3cr3t"}},
+			Body:    `{"ok":true}`,
+			Secrets: []string{"s3cr3t"},
+		},
+		Response: &model.Response{Status: "200 OK", StatusCode: 200, Body: []byte(`{"a":1}`)},
+	}
+	m.overlay, m.focusedPane = responseOverlay, paneRequest
+
+	pane := func() string {
+		return ansi.Strip(strings.Join(m.requestPaneLines(60), "\n"))
+	}
+
+	sent := pane()
+	if !strings.Contains(sent, "GET https://api.example.com/me") {
+		t.Fatalf("sent view missing resolved URL:\n%s", sent)
+	}
+	if !strings.Contains(sent, "Bearer ••••••") || strings.Contains(sent, "s3cr3t") {
+		t.Fatalf("secret not redacted by default:\n%s", sent)
+	}
+
+	if _, _ = m.handleKey("x"); !m.revealSecrets {
+		t.Fatal("x did not toggle reveal")
+	}
+	if revealed := pane(); !strings.Contains(revealed, "Bearer s3cr3t") {
+		t.Fatalf("x did not reveal secret:\n%s", revealed)
+	}
+
+	if _, _ = m.handleKey("y"); !m.requestShowDefinition {
+		t.Fatal("y did not toggle to definition view")
+	}
+	if def := pane(); !strings.Contains(def, "{{base_url}}/me") {
+		t.Fatalf("definition view missing placeholders:\n%s", def)
+	}
+}
+
 func TestSplitPaneRowsKeepStableWidth(t *testing.T) {
 	m := testModel()
 	rows := m.renderPane("Response", []string{"short", lipgloss.NewStyle().Bold(true).Render(strings.Repeat("x", 80))}, 32, 8, 0, true, strings.Repeat("hint ", 20))

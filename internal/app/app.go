@@ -57,7 +57,7 @@ func (a *App) RunRequest(ctx context.Context, ref, environment string, runtime m
 		result.Error = err
 		return result
 	}
-	result.Response, result.Error = a.Executor.Execute(ctx, request, vars)
+	result.Response, result.Sent, result.Error = a.Executor.Execute(ctx, request, vars)
 	if result.Error == nil {
 		result.Assertions = assertions.EvaluateAll(request.Assert, result.Response, vars)
 	}

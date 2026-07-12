@@ -92,3 +92,13 @@ func (s *Set) Values() map[string]string {
 	}
 	return values
 }
+
+// Secrets returns the resolved secret values, used to redact sensitive request
+// details when displaying a request without revealing them.
+func (s *Set) Secrets() []string {
+	secrets := make([]string, 0, len(s.secrets))
+	for value := range s.secrets {
+		secrets = append(secrets, value)
+	}
+	return secrets
+}

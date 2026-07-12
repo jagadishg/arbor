@@ -155,6 +155,8 @@ type Model struct {
 	discardResult         bool
 	restoreSplitAfterEdit bool
 	requestResult         *model.RequestResult
+	requestShowDefinition bool
+	revealSecrets         bool
 	responseSearch        string
 	responseMatch         int
 	overlaySearch         string
@@ -214,6 +216,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.running, m.cancel, m.requestResult, m.scenarioReport = false, nil, &result, nil
 		m.overlay, m.focusedPane, m.requestOffset, m.responseOffset = responseOverlay, paneResponse, 0, 0
+		m.requestShowDefinition, m.revealSecrets = false, false
 		if result.Passed() {
 			m.message = "Request completed"
 		} else {
@@ -453,6 +456,11 @@ func (m *Model) handleSplitKey(key string) (tea.Model, tea.Cmd) {
 	case "e":
 		m.overlay = noOverlay
 		return m, m.editRequestInView()
+	case "y":
+		m.requestShowDefinition = !m.requestShowDefinition
+		m.requestOffset = 0
+	case "x":
+		m.revealSecrets = !m.revealSecrets
 	case "r":
 		if !m.running {
 			return m, m.runRequest(m.requestResult.Request.Ref())
@@ -1462,7 +1470,7 @@ func (m *Model) renderSplit(width, height int) string {
 	m.requestOffset = clampOffset(m.requestOffset, len(reqLines), layout.available)
 	m.responseOffset = clampOffset(m.responseOffset, len(respLines), layout.available)
 
-	left := m.renderPane("Request "+m.requestResult.Request.Ref(), reqLines, layout.leftOuter, layout.height, m.requestOffset, m.focusedPane == paneRequest, "[e] edit  [tab] focus")
+	left := m.renderPane(m.requestPaneTitle(), reqLines, layout.leftOuter, layout.height, m.requestOffset, m.focusedPane == paneRequest, m.requestPaneFooter())
 	responseFooter := "[j/k] scroll  [g/G] top/end  [/] search  [n/N] match  [q] close"
 	if m.responseSearch != "" {
 		matches := m.responseSearchMatches(layout.responseWidth)
@@ -1481,6 +1489,30 @@ func (m *Model) renderSplit(width, height int) string {
 		rows[index] = left[index] + right[index]
 	}
 	return strings.Join(rows, "\n")
+}
+
+// requestPaneTitle labels the request pane with the active view: the resolved
+// request that was sent, or the raw YAML definition.
+func (m *Model) requestPaneTitle() string {
+	ref := m.requestResult.Request.Ref()
+	if m.requestShowDefinition || m.requestResult.Sent == nil {
+		return "Request " + ref + " (definition)"
+	}
+	if m.revealSecrets {
+		return "Request " + ref + " (sent, revealed)"
+	}
+	return "Request " + ref + " (sent)"
+}
+
+func (m *Model) requestPaneFooter() string {
+	if m.requestShowDefinition || m.requestResult.Sent == nil {
+		return "[y] sent  [e] edit  [tab] focus"
+	}
+	reveal := "[x] reveal"
+	if m.revealSecrets {
+		reveal = "[x] hide"
+	}
+	return "[y] definition  " + reveal + "  [e] edit"
 }
 
 func clampOffset(offset, total, available int) int {
@@ -1537,6 +1569,16 @@ func (m *Model) renderPane(title string, lines []string, outerWidth, height, off
 }
 
 func (m *Model) requestPaneLines(inner int) []string {
+	sent := m.requestResult.Sent
+	if m.requestShowDefinition || sent == nil {
+		return m.requestDefinitionLines(inner)
+	}
+	return m.sentRequestLines(sent, inner)
+}
+
+// requestDefinitionLines renders the raw YAML definition (the edit target),
+// with placeholders left unresolved.
+func (m *Model) requestDefinitionLines(inner int) []string {
 	raw := ""
 	if path := m.requestResult.Request.Path; path != "" {
 		if data, err := os.ReadFile(path); err == nil {
@@ -1549,6 +1591,43 @@ func (m *Model) requestPaneLines(inner int) []string {
 	var out []string
 	for _, line := range strings.Split(wrap(raw, inner), "\n") {
 		out = append(out, highlightYAMLLine(line))
+	}
+	return out
+}
+
+// sentRequestLines renders the fully-resolved request that went on the wire:
+// method + URL, headers, and body. Secret values are masked unless revealed.
+func (m *Model) sentRequestLines(sent *model.SentRequest, inner int) []string {
+	reveal := func(text string) string {
+		if m.revealSecrets {
+			return text
+		}
+		return sent.Redact(text)
+	}
+	sectionStyle := lipgloss.NewStyle().Foreground(muted).Bold(true)
+	headerStyle := lipgloss.NewStyle().Foreground(muted)
+
+	var out []string
+	requestLine := strings.ToUpper(sent.Method) + " " + reveal(sent.URL)
+	for _, line := range strings.Split(wrap(requestLine, inner), "\n") {
+		out = append(out, highlightYAMLLine(line))
+	}
+
+	if len(sent.Headers) > 0 {
+		out = append(out, "", sectionStyle.Render("Headers"))
+		for _, key := range sortedHeaderKeys(sent.Headers) {
+			value := reveal(strings.Join(sent.Headers[key], ", "))
+			for _, line := range strings.Split(wrap(key+": "+value, inner), "\n") {
+				out = append(out, headerStyle.Render(line))
+			}
+		}
+	}
+
+	if strings.TrimSpace(sent.Body) != "" {
+		out = append(out, "", sectionStyle.Render("Body"))
+		for _, line := range strings.Split(wrap(reveal(sent.Body), inner), "\n") {
+			out = append(out, highlightJSONLine(line))
+		}
 	}
 	return out
 }
@@ -2062,7 +2141,7 @@ func (m *Model) responseContent(width int) string {
 
 func (m *Model) helpContent() string {
 	help := strings.Join([]string{
-		"Navigation", "  j/k, ↑/↓     move selection", "  g/G          first/last resource", "  Ctrl-f/b     page down/up", "  Enter        drill into a collection / switch workspace (or describe)", "  Esc, q, h, [ back through view history", "  ], →         forward through view history", "", "Resource actions", "  Enter, d     describe selected resource", "  y            show YAML", "  e            edit in $EDITOR", "  r            run selected request or scenario", "  l            show last response (like logs)", "  Ctrl-w       toggle wide table columns", "", "Views and commands", "  :            command prompt (top, k9s-style)", "  :ws          switch workspace (project); :ws <name> jumps directly", "  :use <env>   set the active environment (:ctx is a k9s-style alias)", "  :attach f=./x attach a multipart file to a request", "  :collections browse collections; :req :sc :env for the rest", "", "Response split view", "  Tab          switch focus between request and response", "  h/l, ←/→     focus request / response pane", "  j/k          scroll one line; Ctrl-f/b page; g/G top/end", "  H/M/L        visible top/middle/bottom", "  /            search response; Enter applies live query", "  n/N          next/previous response match", "  e            edit the request", "  Ctrl-a       show resource aliases", "  Tab/Ctrl-f/→ accept command suggestion", "  ↑/↓          choose command suggestion", "  Ctrl-u       clear command; Ctrl-w removes its last word", "  Ctrl-r       reload workspace", "  ?            this help", "  Ctrl-c, :q   quit (or cancel a running request)",
+		"Navigation", "  j/k, ↑/↓     move selection", "  g/G          first/last resource", "  Ctrl-f/b     page down/up", "  Enter        drill into a collection / switch workspace (or describe)", "  Esc, q, h, [ back through view history", "  ], →         forward through view history", "", "Resource actions", "  Enter, d     describe selected resource", "  y            show YAML", "  e            edit in $EDITOR", "  r            run selected request or scenario", "  l            show last response (like logs)", "  Ctrl-w       toggle wide table columns", "", "Views and commands", "  :            command prompt (top, k9s-style)", "  :ws          switch workspace (project); :ws <name> jumps directly", "  :use <env>   set the active environment (:ctx is a k9s-style alias)", "  :attach f=./x attach a multipart file to a request", "  :collections browse collections; :req :sc :env for the rest", "", "Response split view", "  Tab          switch focus between request and response", "  h/l, ←/→     focus request / response pane", "  j/k          scroll one line; Ctrl-f/b page; g/G top/end", "  H/M/L        visible top/middle/bottom", "  /            search response; Enter applies live query", "  n/N          next/previous response match", "  y            request pane: toggle sent / definition", "  x            request pane: reveal / hide secrets", "  e            edit the request", "  Ctrl-a       show resource aliases", "  Tab/Ctrl-f/→ accept command suggestion", "  ↑/↓          choose command suggestion", "  Ctrl-u       clear command; Ctrl-w removes its last word", "  Ctrl-r       reload workspace", "  ?            this help", "  Ctrl-c, :q   quit (or cancel a running request)",
 	}, "\n")
 	if len(m.hotkeys) == 0 {
 		return help
@@ -2105,7 +2184,7 @@ func (m *Model) contextualShortcuts() string {
 		return "[enter] execute  [tab] complete  [esc] cancel"
 	}
 	if m.inSplitView() {
-		return "[tab] pane  [j/k] scroll  [g/G] top/end  [/] search  [n/N] match  [q] close"
+		return "[tab] pane  [j/k] scroll  [y] view  [x] reveal  [/] search  [q] close"
 	}
 	if m.overlay != noOverlay {
 		shortcuts := "[j/k] scroll  [g/G] top/end  [/] search  [n/N] match  [q] close"

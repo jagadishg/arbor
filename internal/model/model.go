@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 const SchemaVersion = 1
 
@@ -104,10 +107,33 @@ type AssertionResult struct {
 
 type RequestResult struct {
 	Request    Request
+	Sent       *SentRequest
 	Response   *Response
 	Assertions []AssertionResult
 	Extracted  map[string]string
 	Error      error
+}
+
+// SentRequest captures the fully-resolved HTTP request that was executed, so the
+// request pane can show what actually went on the wire rather than the YAML
+// definition. Secret values are stored unredacted; callers mask them with Redact
+// unless the user reveals them.
+type SentRequest struct {
+	Method  string
+	URL     string
+	Headers map[string][]string
+	Body    string
+	Secrets []string
+}
+
+// Redact replaces known secret values in text with a masked placeholder.
+func (s SentRequest) Redact(text string) string {
+	for _, secret := range s.Secrets {
+		if secret != "" {
+			text = strings.ReplaceAll(text, secret, "••••••")
+		}
+	}
+	return text
 }
 
 func (r RequestResult) Passed() bool {

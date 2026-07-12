@@ -44,11 +44,12 @@ func New(options model.HTTPOptions) (*Executor, error) {
 	return &Executor{Client: client}, nil
 }
 
-func (e *Executor) Execute(ctx context.Context, definition model.Request, vars *variables.Set) (*model.Response, error) {
+func (e *Executor) Execute(ctx context.Context, definition model.Request, vars *variables.Set) (*model.Response, *model.SentRequest, error) {
 	request, err := BuildRequest(ctx, definition, vars)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	sent := SnapshotRequest(definition, request, vars)
 	client := e.Client
 	if client == nil {
 		client = &http.Client{Timeout: defaultTimeout}
@@ -56,7 +57,7 @@ func (e *Executor) Execute(ctx context.Context, definition model.Request, vars *
 	if definition.Timeout != "" {
 		timeout, err := time.ParseDuration(definition.Timeout)
 		if err != nil {
-			return nil, fmt.Errorf("parse request timeout: %w", err)
+			return nil, sent, fmt.Errorf("parse request timeout: %w", err)
 		}
 		clone := *client
 		clone.Timeout = timeout
@@ -66,17 +67,67 @@ func (e *Executor) Execute(ctx context.Context, definition model.Request, vars *
 	response, err := client.Do(request)
 	duration := time.Since(started)
 	if err != nil {
-		return nil, fmt.Errorf("execute %s %s: %w", request.Method, vars.Redact(request.URL.String()), err)
+		return nil, sent, fmt.Errorf("execute %s %s: %w", request.Method, vars.Redact(request.URL.String()), err)
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read response body: %w", err)
+		return nil, sent, fmt.Errorf("read response body: %w", err)
 	}
 	return &model.Response{
 		Status: response.Status, StatusCode: response.StatusCode, Headers: response.Header,
 		Body: body, Duration: duration, Size: int64(len(body)), URL: vars.Redact(request.URL.String()),
-	}, nil
+	}, sent, nil
+}
+
+// SnapshotRequest captures the resolved request for display in the request pane.
+// The body is read via GetBody so the request stays sendable; multipart bodies
+// are summarised rather than dumping raw file bytes.
+func SnapshotRequest(definition model.Request, request *http.Request, vars *variables.Set) *model.SentRequest {
+	sent := &model.SentRequest{
+		Method:  request.Method,
+		URL:     request.URL.String(),
+		Headers: map[string][]string{},
+		Secrets: vars.Secrets(),
+	}
+	for key, values := range request.Header {
+		copied := make([]string, len(values))
+		copy(copied, values)
+		sent.Headers[key] = copied
+	}
+	if strings.HasPrefix(request.Header.Get("Content-Type"), "multipart/form-data") {
+		sent.Body = multipartSummary(definition, vars)
+		return sent
+	}
+	if request.GetBody != nil {
+		if reader, err := request.GetBody(); err == nil {
+			if data, readErr := io.ReadAll(reader); readErr == nil {
+				sent.Body = string(data)
+			}
+		}
+	}
+	return sent
+}
+
+// multipartSummary renders the form fields and attached files of a multipart
+// request as a readable list, avoiding raw binary file contents.
+func multipartSummary(definition model.Request, vars *variables.Set) string {
+	var builder strings.Builder
+	for _, key := range sortedKeys(definition.Form) {
+		resolved, err := vars.Resolve(definition.Form[key])
+		if err != nil {
+			resolved = definition.Form[key]
+		}
+		fmt.Fprintf(&builder, "%s: %s\n", key, resolved)
+	}
+	for _, field := range sortedKeys(definition.Files) {
+		resolved, err := vars.Resolve(definition.Files[field])
+		if err != nil {
+			resolved = definition.Files[field]
+		}
+		fmt.Fprintf(&builder, "%s: @%s (file)\n", field, resolved)
+	}
+	return strings.TrimRight(builder.String(), "\n")
 }
 
 func BuildRequest(ctx context.Context, definition model.Request, vars *variables.Set) (*http.Request, error) {
