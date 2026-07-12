@@ -67,6 +67,33 @@ const (
 	paneResponse
 )
 
+type splitLayout struct {
+	height        int
+	available     int
+	leftOuter     int
+	rightOuter    int
+	requestWidth  int
+	responseWidth int
+}
+
+func newSplitLayout(width, height int) splitLayout {
+	height = max(6, height)
+	leftOuter := width * 42 / 100
+	rightOuter := width - leftOuter
+	if width >= 48 {
+		leftOuter = max(24, leftOuter)
+		rightOuter = max(24, rightOuter)
+	}
+	return splitLayout{
+		height:        height,
+		available:     max(1, height-3),
+		leftOuter:     leftOuter,
+		rightOuter:    rightOuter,
+		requestWidth:  max(1, leftOuter-3),
+		responseWidth: max(1, rightOuter-3),
+	}
+}
+
 type viewLocation struct {
 	section  section
 	filter   string
@@ -337,12 +364,22 @@ func (m *Model) inSplitView() bool {
 	return m.overlay == responseOverlay && m.requestResult != nil
 }
 
+func (m *Model) currentSplitLayout() splitLayout {
+	width := max(m.width, 50)
+	height := max(m.height, 12)
+	header := m.renderHeader(width)
+	return newSplitLayout(width, height-lipgloss.Height(header)-1)
+}
+
 func (m *Model) handleSplitKey(key string) (tea.Model, tea.Cmd) {
+	layout := m.currentSplitLayout()
 	lineStep := 1
-	pageStep := max(1, m.modalHeight()-3)
+	pageStep := layout.available
 	offset := &m.responseOffset
+	lines := m.responsePaneLines(layout.responseWidth)
 	if m.focusedPane == paneRequest {
 		offset = &m.requestOffset
+		lines = m.requestPaneLines(layout.requestWidth)
 	}
 	switch key {
 	case "q", "esc":
@@ -383,13 +420,13 @@ func (m *Model) handleSplitKey(key string) (tea.Model, tea.Cmd) {
 	case "g", "home":
 		*offset = 0
 	case "G", "end":
-		*offset = max(0, len(m.responsePaneLines(m.responseInnerWidth()))-pageStep)
+		*offset = max(0, len(lines)-layout.available)
 	case "H":
 		*offset = 0
 	case "M":
-		*offset = max(0, len(m.responsePaneLines(m.responseInnerWidth()))/2-pageStep/2)
+		*offset = clampOffset(max(0, len(lines)/2-pageStep/2), len(lines), layout.available)
 	case "L":
-		*offset = max(0, len(m.responsePaneLines(m.responseInnerWidth()))-pageStep)
+		*offset = max(0, len(lines)-layout.available)
 	case "/":
 		if m.focusedPane == paneResponse {
 			m.mode, m.input = responseSearchMode, m.responseSearch
@@ -482,11 +519,14 @@ func (m *Model) handleResponseSearchInput(key string) (tea.Model, tea.Cmd) {
 		}
 	case "backspace":
 		m.input = trimRune(m.input)
+		m.responseSearch, m.responseMatch = m.input, -1
 	case "ctrl+u":
 		m.input = ""
+		m.responseSearch, m.responseMatch = "", -1
 	default:
 		if isTextKey(key) {
 			m.input += key
+			m.responseSearch, m.responseMatch = m.input, -1
 		}
 	}
 	return m, nil
@@ -1300,31 +1340,30 @@ func (m *Model) tableRow(index int, item item, width int) string {
 // on the left and the response on the right, k9s-style. The focused pane has a
 // blue border and receives scroll keys; the other is muted.
 func (m *Model) renderSplit(width, height int) string {
-	height = max(6, height)
-	leftOuter := width * 42 / 100
-	rightOuter := width - leftOuter
-	if width >= 48 {
-		leftOuter = max(24, leftOuter)
-		rightOuter = max(24, rightOuter)
-	}
+	layout := newSplitLayout(width, height)
 
-	reqLines := m.requestPaneLines(leftOuter - 3)
-	respLines := m.responsePaneLines(rightOuter - 3)
+	reqLines := m.requestPaneLines(layout.requestWidth)
+	respLines := m.responsePaneLines(layout.responseWidth)
 
-	available := max(1, height-3)
-	m.requestOffset = clampOffset(m.requestOffset, len(reqLines), available)
-	m.responseOffset = clampOffset(m.responseOffset, len(respLines), available)
+	m.requestOffset = clampOffset(m.requestOffset, len(reqLines), layout.available)
+	m.responseOffset = clampOffset(m.responseOffset, len(respLines), layout.available)
 
-	left := m.renderPane("Request "+m.requestResult.Request.Ref(), reqLines, leftOuter, height, m.requestOffset, m.focusedPane == paneRequest, "[e] edit  [tab] focus")
+	left := m.renderPane("Request "+m.requestResult.Request.Ref(), reqLines, layout.leftOuter, layout.height, m.requestOffset, m.focusedPane == paneRequest, "[e] edit  [tab] focus")
 	responseFooter := "[j/k] scroll  [g/G] top/end  [/] search  [n/N] match  [q] close"
 	if m.responseSearch != "" {
-		matches := m.responseSearchMatches(rightOuter - 3)
+		matches := m.responseSearchMatches(layout.responseWidth)
 		responseFooter += fmt.Sprintf("  /%s (%d)", m.responseSearch, len(matches))
 	}
-	right := m.renderPane("Response", respLines, rightOuter, height, m.responseOffset, m.focusedPane == paneResponse, responseFooter)
+	responseTitle := "Response"
+	if m.mode == responseSearchMode {
+		responseTitle = "/ " + m.input + "▊"
+	} else if m.responseSearch != "" {
+		responseTitle = "Response /" + m.responseSearch
+	}
+	right := m.renderPane(responseTitle, respLines, layout.rightOuter, layout.height, m.responseOffset, m.focusedPane == paneResponse, responseFooter)
 
-	rows := make([]string, height)
-	for index := 0; index < height; index++ {
+	rows := make([]string, layout.height)
+	for index := 0; index < layout.height; index++ {
 		rows[index] = left[index] + right[index]
 	}
 	return strings.Join(rows, "\n")
@@ -1401,36 +1440,87 @@ func (m *Model) requestPaneLines(inner int) []string {
 }
 
 func (m *Model) responsePaneLines(inner int) []string {
-	result := m.requestResult
+	document := m.responseDocumentLines(inner)
 	if m.running {
 		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-		frame := frames[m.spinner%len(frames)]
-		elapsed := time.Since(m.requestStarted).Milliseconds()
 		return []string{
-			lipgloss.NewStyle().Foreground(blue).Bold(true).Render(frame + " Running request…"),
-			lipgloss.NewStyle().Foreground(muted).Render(fmt.Sprintf("Elapsed %d ms", elapsed)),
+			lipgloss.NewStyle().Foreground(blue).Bold(true).Render(frames[m.spinner%len(frames)] + " " + document[0]),
+			lipgloss.NewStyle().Foreground(muted).Render(document[1]),
 			"",
-			lipgloss.NewStyle().Foreground(muted).Render("Press q or esc to cancel and go back"),
+			lipgloss.NewStyle().Foreground(muted).Render(document[3]),
 		}
 	}
+
+	result := m.requestResult
+	lines := make([]string, 0, len(document))
+	section := ""
+	for index, line := range document {
+		styled := line
+		switch {
+		case result.Error != nil:
+			if index == 0 {
+				styled = lipgloss.NewStyle().Foreground(red).Bold(true).Render(line)
+			} else {
+				styled = lipgloss.NewStyle().Foreground(red).Render(line)
+			}
+		case index == 0:
+			styled = statusStyle(result.Response.StatusCode).Render(line)
+		case index == 1:
+			styled = lipgloss.NewStyle().Foreground(muted).Render(line)
+		case line == "Assertions" || line == "Headers" || line == "Body":
+			section = line
+			styled = lipgloss.NewStyle().Foreground(muted).Bold(true).Render(line)
+		case strings.HasPrefix(line, "✓ "):
+			styled = lipgloss.NewStyle().Foreground(green).Render("✓") + line[1:]
+		case strings.HasPrefix(line, "✗ "):
+			styled = lipgloss.NewStyle().Foreground(red).Render("✗") + line[1:]
+		case section == "Headers":
+			styled = lipgloss.NewStyle().Foreground(muted).Render(line)
+		default:
+			styled = highlightJSONLine(line)
+		}
+		lines = append(lines, styled)
+	}
+
+	if m.responseSearch != "" {
+		matches := m.responseSearchMatches(inner)
+		current := -1
+		if m.responseMatch >= 0 && m.responseMatch < len(matches) {
+			current = matches[m.responseMatch]
+		}
+		for index, line := range lines {
+			if strings.Contains(strings.ToLower(document[index]), strings.ToLower(m.responseSearch)) {
+				color := selectedBackground
+				if index == current {
+					color = yellow
+				}
+				lines[index] = lipgloss.NewStyle().Background(color).Render(ansi.Strip(line))
+			}
+		}
+	}
+	return lines
+}
+
+func (m *Model) responseDocumentLines(inner int) []string {
+	result := m.requestResult
+	if m.running {
+		return []string{"Running request…", fmt.Sprintf("Elapsed %d ms", time.Since(m.requestStarted).Milliseconds()), "", "Press q or esc to cancel and go back"}
+	}
 	if result.Error != nil {
-		lines := []string{lipgloss.NewStyle().Foreground(red).Bold(true).Render("Request failed"), ""}
+		lines := []string{"Request failed", ""}
 		for _, line := range strings.Split(wrap(result.Error.Error(), inner), "\n") {
-			lines = append(lines, lipgloss.NewStyle().Foreground(red).Render(line))
+			lines = append(lines, line)
 		}
 		return lines
 	}
 	response := result.Response
-	lines := []string{
-		statusStyle(response.StatusCode).Render("●") + " " + truncate(response.Status, max(1, inner-2)),
-		lipgloss.NewStyle().Foreground(muted).Render(truncate(fmt.Sprintf("%s · %d B", response.Duration.Round(time.Millisecond), response.Size), inner)),
-	}
+	lines := []string{"● " + truncate(response.Status, max(1, inner-2)), truncate(fmt.Sprintf("%s · %d B", response.Duration.Round(time.Millisecond), response.Size), inner)}
 	if len(result.Assertions) > 0 {
-		lines = append(lines, "", lipgloss.NewStyle().Foreground(muted).Bold(true).Render("Assertions"))
+		lines = append(lines, "", "Assertions")
 		for _, assertion := range result.Assertions {
-			mark := lipgloss.NewStyle().Foreground(green).Render("✓")
+			mark := "✓"
 			if !assertion.Passed {
-				mark = lipgloss.NewStyle().Foreground(red).Render("✗")
+				mark = "✗"
 			}
 			text := assertion.Expression
 			if assertion.Message != "" {
@@ -1440,33 +1530,18 @@ func (m *Model) responsePaneLines(inner int) []string {
 		}
 	}
 	if len(response.Headers) > 0 {
-		lines = append(lines, "", lipgloss.NewStyle().Foreground(muted).Bold(true).Render("Headers"))
+		lines = append(lines, "", "Headers")
 		for _, key := range sortedHeaderKeys(response.Headers) {
-			line := truncate(key+": "+strings.Join(response.Headers[key], ", "), inner)
-			lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render(line))
+			lines = append(lines, truncate(key+": "+strings.Join(response.Headers[key], ", "), inner))
 		}
 	}
-	lines = append(lines, "", lipgloss.NewStyle().Foreground(muted).Bold(true).Render("Body"))
-	for _, line := range strings.Split(formatBody(response.Body, inner), "\n") {
-		lines = append(lines, highlightJSONLine(line))
-	}
-	if m.responseSearch != "" {
-		for index, line := range lines {
-			if strings.Contains(strings.ToLower(ansi.Strip(line)), strings.ToLower(m.responseSearch)) {
-				lines[index] = lipgloss.NewStyle().Background(selectedBackground).Render(ansi.Strip(line))
-			}
-		}
-	}
+	lines = append(lines, "", "Body")
+	lines = append(lines, strings.Split(formatBody(response.Body, inner), "\n")...)
 	return lines
 }
 
 func (m *Model) responseInnerWidth() int {
-	width := max(m.width, 50)
-	leftOuter := width * 42 / 100
-	if width >= 48 {
-		leftOuter = max(24, leftOuter)
-	}
-	return max(1, width-leftOuter-3)
+	return m.currentSplitLayout().responseWidth
 }
 
 func (m *Model) responseSearchMatches(inner int) []int {
@@ -1474,22 +1549,14 @@ func (m *Model) responseSearchMatches(inner int) []int {
 		return nil
 	}
 	query := strings.ToLower(m.responseSearch)
-	lines := m.responsePaneLinesWithoutSearch(inner)
+	document := m.responseDocumentLines(inner)
 	matches := make([]int, 0)
-	for index, line := range lines {
-		if strings.Contains(strings.ToLower(ansi.Strip(line)), query) {
+	for index, line := range document {
+		if strings.Contains(strings.ToLower(line), query) {
 			matches = append(matches, index)
 		}
 	}
 	return matches
-}
-
-func (m *Model) responsePaneLinesWithoutSearch(inner int) []string {
-	search := m.responseSearch
-	m.responseSearch = ""
-	lines := m.responsePaneLines(inner)
-	m.responseSearch = search
-	return lines
 }
 
 func (m *Model) jumpToResponseMatch(next bool) {
@@ -1505,8 +1572,9 @@ func (m *Model) jumpToResponseMatch(next bool) {
 	} else {
 		m.responseMatch = (m.responseMatch - 1 + len(matches)) % len(matches)
 	}
-	pageHeight := max(1, m.modalHeight()-3)
-	m.responseOffset = max(0, matches[m.responseMatch]-pageHeight/2)
+	layout := m.currentSplitLayout()
+	document := m.responseDocumentLines(layout.responseWidth)
+	m.responseOffset = clampOffset(matches[m.responseMatch]-layout.available/2, len(document), layout.available)
 	m.message = fmt.Sprintf("Match %d/%d for /%s", m.responseMatch+1, len(matches), m.responseSearch)
 }
 
@@ -1794,7 +1862,7 @@ func (m *Model) responseContent(width int) string {
 
 func (m *Model) helpContent() string {
 	help := strings.Join([]string{
-		"Navigation", "  j/k, ↑/↓     move selection", "  g/G          first/last resource", "  Ctrl-f/b     page down/up", "  Enter        drill into a collection / switch workspace (or describe)", "  Esc, q, h, [ back through view history", "  ], →         forward through view history", "", "Resource actions", "  Enter, d     describe selected resource", "  y            show YAML", "  e            edit in $EDITOR", "  r            run selected request or scenario", "  l            show last response (like logs)", "  Ctrl-w       toggle wide table columns", "", "Views and commands", "  :            command prompt (top, k9s-style)", "  :ws          switch workspace (project); :ws <name> jumps directly", "  :use <env>   set the active environment (:ctx is a k9s-style alias)", "  :attach f=./x attach a multipart file to the selected request", "  :collections browse collections; :req :sc :env for the rest", "", "Response split view", "  Tab          switch focus between request and response", "  h/l, ←/→     focus request / response pane", "  j/k          scroll the focused pane; e edits the request", "  Ctrl-a       show resource aliases", "  /            filter the current resource view", "  Tab/Ctrl-f/→ accept command suggestion", "  ↑/↓          choose command suggestion", "  Ctrl-u       clear command; Ctrl-w removes its last word", "  Ctrl-r       reload workspace", "  ?            this help", "  Ctrl-c, :q   quit (or cancel a running request)",
+		"Navigation", "  j/k, ↑/↓     move selection", "  g/G          first/last resource", "  Ctrl-f/b     page down/up", "  Enter        drill into a collection / switch workspace (or describe)", "  Esc, q, h, [ back through view history", "  ], →         forward through view history", "", "Resource actions", "  Enter, d     describe selected resource", "  y            show YAML", "  e            edit in $EDITOR", "  r            run selected request or scenario", "  l            show last response (like logs)", "  Ctrl-w       toggle wide table columns", "", "Views and commands", "  :            command prompt (top, k9s-style)", "  :ws          switch workspace (project); :ws <name> jumps directly", "  :use <env>   set the active environment (:ctx is a k9s-style alias)", "  :attach f=./x attach a multipart file to a request", "  :collections browse collections; :req :sc :env for the rest", "", "Response split view", "  Tab          switch focus between request and response", "  h/l, ←/→     focus request / response pane", "  j/k          scroll one line; Ctrl-f/b page; g/G top/end", "  H/M/L        visible top/middle/bottom", "  /            search response; Enter applies live query", "  n/N          next/previous response match", "  e            edit the request", "  Ctrl-a       show resource aliases", "  Tab/Ctrl-f/→ accept command suggestion", "  ↑/↓          choose command suggestion", "  Ctrl-u       clear command; Ctrl-w removes its last word", "  Ctrl-r       reload workspace", "  ?            this help", "  Ctrl-c, :q   quit (or cancel a running request)",
 	}, "\n")
 	if len(m.hotkeys) == 0 {
 		return help

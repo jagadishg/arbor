@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/jagadishg/arbor/internal/app"
 	"github.com/jagadishg/arbor/internal/config"
 	"github.com/jagadishg/arbor/internal/model"
@@ -379,6 +380,9 @@ func TestResponseInspectorNavigationAndSearch(t *testing.T) {
 	if m.responseSearch != "n" || m.mode != normalMode {
 		t.Fatalf("search was not committed: query=%q mode=%v", m.responseSearch, m.mode)
 	}
+	if !strings.Contains(ansi.Strip(m.renderSplit(100, 16)), "Response /n") {
+		t.Fatal("committed search was not shown in the response pane title")
+	}
 	if len(m.responseSearchMatches(m.responseInnerWidth())) == 0 {
 		t.Fatal("search did not find response content")
 	}
@@ -387,8 +391,10 @@ func TestResponseInspectorNavigationAndSearch(t *testing.T) {
 		t.Fatalf("n did not report the current match: %q", m.message)
 	}
 	_, _ = m.handleKey("G")
-	if m.responseOffset == 0 {
-		t.Fatal("G did not move to the end of the response")
+	layout := m.currentSplitLayout()
+	wantEnd := max(0, len(m.responsePaneLines(layout.responseWidth))-layout.available)
+	if m.responseOffset != wantEnd {
+		t.Fatalf("G moved to offset %d, want %d", m.responseOffset, wantEnd)
 	}
 }
 
