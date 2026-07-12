@@ -349,6 +349,36 @@ func TestRunningResponseShowsMilliseconds(t *testing.T) {
 	}
 }
 
+func TestResponseInspectorNavigationAndSearch(t *testing.T) {
+	m := testModel()
+	m.width, m.height = 100, 24
+	m.requestResult = &model.RequestResult{
+		Request:  m.app.Workspace.Requests[0],
+		Response: &model.Response{Status: "200 OK", StatusCode: 200, Body: []byte(`{"message":"needle","items":[1,2,3,4,5,6,7,8,9,10,11,12]}`)},
+	}
+	m.overlay, m.focusedPane = responseOverlay, paneResponse
+	_, _ = m.handleKey("/")
+	if m.mode != responseSearchMode {
+		t.Fatalf("/ did not enter response search mode: %v", m.mode)
+	}
+	_, _ = m.handleKey("n")
+	_, _ = m.handleKey("enter")
+	if m.responseSearch != "n" || m.mode != normalMode {
+		t.Fatalf("search was not committed: query=%q mode=%v", m.responseSearch, m.mode)
+	}
+	if len(m.responseSearchMatches(m.responseInnerWidth())) == 0 {
+		t.Fatal("search did not find response content")
+	}
+	_, _ = m.handleKey("n")
+	if !strings.Contains(m.message, "Match") {
+		t.Fatalf("n did not report the current match: %q", m.message)
+	}
+	_, _ = m.handleKey("G")
+	if m.responseOffset == 0 {
+		t.Fatal("G did not move to the end of the response")
+	}
+}
+
 func TestBackingOutOfRunningRequestCancelsAndDiscardsResult(t *testing.T) {
 	ws := &model.Workspace{Name: "Demo", Root: "/tmp/demo", Requests: []model.Request{{ID: "users.get", Name: "Get", Method: "GET", URL: "https://x"}}}
 	m := NewModel(context.Background(), "/tmp/demo", "", &app.App{Workspace: ws})

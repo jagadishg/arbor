@@ -46,6 +46,7 @@ const (
 	normalMode inputMode = iota
 	filterMode
 	commandMode
+	responseSearchMode
 )
 
 type overlay int
@@ -124,6 +125,8 @@ type Model struct {
 	discardResult         bool
 	restoreSplitAfterEdit bool
 	requestResult         *model.RequestResult
+	responseSearch        string
+	responseMatch         int
 	scenarioReport        *model.ScenarioReport
 	message               string
 	aliases               map[string]string
@@ -244,7 +247,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleKey(key string) (tea.Model, tea.Cmd) {
-	if m.mode == commandMode || m.mode == filterMode {
+	if m.mode == commandMode || m.mode == filterMode || m.mode == responseSearchMode {
 		return m.handleInput(key)
 	}
 	if m.overlay != noOverlay {
@@ -376,6 +379,26 @@ func (m *Model) handleSplitKey(key string) (tea.Model, tea.Cmd) {
 		}
 	case "g", "home":
 		*offset = 0
+	case "G", "end":
+		*offset = max(0, len(m.responsePaneLines(m.responseInnerWidth()))-pageStep)
+	case "H":
+		*offset = 0
+	case "M":
+		*offset = max(0, len(m.responsePaneLines(m.responseInnerWidth()))/2-pageStep/2)
+	case "L":
+		*offset = max(0, len(m.responsePaneLines(m.responseInnerWidth()))-pageStep)
+	case "/":
+		if m.focusedPane == paneResponse {
+			m.mode, m.input = responseSearchMode, m.responseSearch
+		}
+	case "n":
+		if m.focusedPane == paneResponse {
+			m.jumpToResponseMatch(true)
+		}
+	case "N":
+		if m.focusedPane == paneResponse {
+			m.jumpToResponseMatch(false)
+		}
 	case "e":
 		m.overlay = noOverlay
 		return m, m.editRequestInView()
@@ -435,10 +458,35 @@ func (m *Model) handleOverlayKey(key string) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleInput(key string) (tea.Model, tea.Cmd) {
+	if m.mode == responseSearchMode {
+		return m.handleResponseSearchInput(key)
+	}
 	if m.mode == filterMode {
 		return m.handleFilterInput(key)
 	}
 	return m.handleCommandInput(key)
+}
+
+func (m *Model) handleResponseSearchInput(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "esc":
+		m.mode, m.input = normalMode, ""
+	case "enter":
+		m.responseSearch = strings.TrimSpace(m.input)
+		m.mode, m.input, m.responseMatch = normalMode, "", -1
+		if m.responseSearch != "" {
+			m.jumpToResponseMatch(true)
+		}
+	case "backspace":
+		m.input = trimRune(m.input)
+	case "ctrl+u":
+		m.input = ""
+	default:
+		if isTextKey(key) {
+			m.input += key
+		}
+	}
+	return m, nil
 }
 
 func (m *Model) handleFilterInput(key string) (tea.Model, tea.Cmd) {
@@ -1071,7 +1119,7 @@ func (m *Model) render() string {
 	}
 	sections := header
 	promptHeight := 0
-	if m.mode == commandMode || m.mode == filterMode {
+	if m.mode == commandMode || m.mode == filterMode || m.mode == responseSearchMode {
 		prompt := m.renderPrompt(width)
 		sections += "\n" + prompt
 		promptHeight = lipgloss.Height(prompt)
@@ -1088,7 +1136,7 @@ func (m *Model) render() string {
 func (m *Model) renderPrompt(width int) string {
 	inner := max(20, width-2)
 	glyph, accent := ">", blue
-	if m.mode == filterMode {
+	if m.mode == filterMode || m.mode == responseSearchMode {
 		glyph, accent = "/", red
 	}
 	content := " " + lipgloss.NewStyle().Foreground(accent).Bold(true).Render(glyph) + " " + m.input + "▊"
@@ -1265,7 +1313,12 @@ func (m *Model) renderSplit(width, height int) string {
 	m.responseOffset = clampOffset(m.responseOffset, len(respLines), available)
 
 	left := m.renderPane("Request "+m.requestResult.Request.Ref(), reqLines, leftOuter, height, m.requestOffset, m.focusedPane == paneRequest, "[e] edit  [tab] focus")
-	right := m.renderPane("Response", respLines, rightOuter, height, m.responseOffset, m.focusedPane == paneResponse, "[j/k] scroll  [r] run  [q] close")
+	responseFooter := "[j/k] scroll  [g/G] top/end  [/] search  [n/N] match  [q] close"
+	if m.responseSearch != "" {
+		matches := m.responseSearchMatches(rightOuter - 3)
+		responseFooter += fmt.Sprintf("  /%s (%d)", m.responseSearch, len(matches))
+	}
+	right := m.renderPane("Response", respLines, rightOuter, height, m.responseOffset, m.focusedPane == paneResponse, responseFooter)
 
 	rows := make([]string, height)
 	for index := 0; index < height; index++ {
@@ -1394,7 +1447,64 @@ func (m *Model) responsePaneLines(inner int) []string {
 	for _, line := range strings.Split(formatBody(response.Body, inner), "\n") {
 		lines = append(lines, highlightJSONLine(line))
 	}
+	if m.responseSearch != "" {
+		for index, line := range lines {
+			if strings.Contains(strings.ToLower(ansi.Strip(line)), strings.ToLower(m.responseSearch)) {
+				lines[index] = lipgloss.NewStyle().Background(selectedBackground).Render(ansi.Strip(line))
+			}
+		}
+	}
 	return lines
+}
+
+func (m *Model) responseInnerWidth() int {
+	width := max(m.width, 50)
+	leftOuter := width * 42 / 100
+	if width >= 48 {
+		leftOuter = max(24, leftOuter)
+	}
+	return max(1, width-leftOuter-3)
+}
+
+func (m *Model) responseSearchMatches(inner int) []int {
+	if m.responseSearch == "" {
+		return nil
+	}
+	query := strings.ToLower(m.responseSearch)
+	lines := m.responsePaneLinesWithoutSearch(inner)
+	matches := make([]int, 0)
+	for index, line := range lines {
+		if strings.Contains(strings.ToLower(ansi.Strip(line)), query) {
+			matches = append(matches, index)
+		}
+	}
+	return matches
+}
+
+func (m *Model) responsePaneLinesWithoutSearch(inner int) []string {
+	search := m.responseSearch
+	m.responseSearch = ""
+	lines := m.responsePaneLines(inner)
+	m.responseSearch = search
+	return lines
+}
+
+func (m *Model) jumpToResponseMatch(next bool) {
+	matches := m.responseSearchMatches(m.responseInnerWidth())
+	if len(matches) == 0 {
+		m.message = "No response matches for /" + m.responseSearch
+		return
+	}
+	if m.responseMatch < 0 || m.responseMatch >= len(matches) {
+		m.responseMatch = 0
+	} else if next {
+		m.responseMatch = (m.responseMatch + 1) % len(matches)
+	} else {
+		m.responseMatch = (m.responseMatch - 1 + len(matches)) % len(matches)
+	}
+	pageHeight := max(1, m.modalHeight()-3)
+	m.responseOffset = max(0, matches[m.responseMatch]-pageHeight/2)
+	m.message = fmt.Sprintf("Match %d/%d for /%s", m.responseMatch+1, len(matches), m.responseSearch)
 }
 
 func statusStyle(code int) lipgloss.Style {
