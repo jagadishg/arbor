@@ -157,6 +157,8 @@ type Model struct {
 	requestResult         *model.RequestResult
 	responseSearch        string
 	responseMatch         int
+	overlaySearch         string
+	overlayMatch          int
 	scenarioReport        *model.ScenarioReport
 	message               string
 	aliases               map[string]string
@@ -318,11 +320,14 @@ func (m *Model) handleKey(key string) (tea.Model, tea.Cmd) {
 			return m, m.switchToSelectedWorkspace()
 		default:
 			m.overlay, m.overlayOffset = describeOverlay, 0
+			m.overlaySearch, m.overlayMatch = "", -1
 		}
 	case "d":
 		m.overlay, m.overlayOffset = describeOverlay, 0
+		m.overlaySearch, m.overlayMatch = "", -1
 	case "y":
 		m.overlay, m.overlayOffset = yamlOverlay, 0
+		m.overlaySearch, m.overlayMatch = "", -1
 	case "l":
 		if m.hasResultForSelected() {
 			m.overlay, m.overlayOffset = responseOverlay, 0
@@ -472,6 +477,25 @@ func (m *Model) handleOverlayKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "q", "esc", "d", "y", "l", "?", "ctrl+a":
 		m.overlay, m.overlayOffset = noOverlay, 0
+	case "G", "shift+g", "end":
+		lines := m.overlayDocumentLines(m.overlayContentWidth())
+		m.overlayOffset = max(0, len(lines)-m.overlayAvailable())
+	case "g", "home", "H":
+		m.overlayOffset = 0
+	case "M":
+		lines := m.overlayDocumentLines(m.overlayContentWidth())
+		available := m.overlayAvailable()
+		m.overlayOffset = clampOffset(max(0, len(lines)/2-available/2), len(lines), available)
+	case "L":
+		lines := m.overlayDocumentLines(m.overlayContentWidth())
+		m.overlayOffset = max(0, len(lines)-m.overlayAvailable())
+	case "/":
+		m.mode, m.input = responseSearchMode, ""
+		m.overlaySearch, m.overlayMatch = "", -1
+	case "n":
+		m.jumpToOverlayMatch(true)
+	case "N", "shift+n":
+		m.jumpToOverlayMatch(false)
 	case "ctrl+c":
 		if m.running && m.cancel != nil {
 			m.cancel()
@@ -509,25 +533,35 @@ func (m *Model) handleInput(key string) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleResponseSearchInput(key string) (tea.Model, tea.Cmd) {
+	isResponse := m.inSplitView()
+	setQuery := func(value string) {
+		if isResponse {
+			m.responseSearch, m.responseMatch = value, -1
+		} else {
+			m.overlaySearch, m.overlayMatch = value, -1
+		}
+	}
 	switch key {
 	case "esc":
 		m.mode, m.input = normalMode, ""
 	case "enter":
-		m.responseSearch = strings.TrimSpace(m.input)
+		setQuery(strings.TrimSpace(m.input))
 		m.mode, m.input, m.responseMatch = normalMode, "", -1
-		if m.responseSearch != "" {
+		if isResponse && m.responseSearch != "" {
 			m.jumpToResponseMatch(true)
+		} else if !isResponse && m.overlaySearch != "" {
+			m.jumpToOverlayMatch(true)
 		}
 	case "backspace":
 		m.input = trimRune(m.input)
-		m.responseSearch, m.responseMatch = m.input, -1
+		setQuery(m.input)
 	case "ctrl+u":
 		m.input = ""
-		m.responseSearch, m.responseMatch = "", -1
+		setQuery("")
 	default:
 		if isTextKey(key) {
 			m.input += key
-			m.responseSearch, m.responseMatch = m.input, -1
+			setQuery(m.input)
 		}
 	}
 	return m, nil
@@ -1159,7 +1193,7 @@ func (m *Model) render() string {
 		if m.inSplitView() {
 			body = m.renderSplit(width, height-lipgloss.Height(header)-1)
 		} else {
-			body = m.renderOverlay(width, height-lipgloss.Height(header))
+			body = m.renderOverlay(width, height-lipgloss.Height(header)-1)
 		}
 		return lipgloss.NewStyle().Foreground(foreground).Render(header + "\n" + body)
 	}
@@ -1569,17 +1603,16 @@ func highlightSearchLine(line, query string, current bool) string {
 		background = searchCurrent
 		foregroundColor = lipgloss.Color("#1A1B26")
 	}
-	base := lipgloss.NewStyle().Foreground(foregroundColor)
 	match := lipgloss.NewStyle().Foreground(foregroundColor).Background(background).Bold(true)
 	lowerLine, lowerQuery := strings.ToLower(line), strings.ToLower(query)
 	var out strings.Builder
 	for len(lowerLine) > 0 {
 		index := strings.Index(lowerLine, lowerQuery)
 		if index < 0 {
-			out.WriteString(base.Render(line))
+			out.WriteString(line)
 			break
 		}
-		out.WriteString(base.Render(line[:index]))
+		out.WriteString(line[:index])
 		end := index + len(query)
 		if end > len(line) {
 			end = len(line)
@@ -1680,13 +1713,18 @@ func highlightJSONValue(value string) string {
 func (m *Model) renderOverlay(width, height int) string {
 	inner := max(20, width-2)
 	height = max(6, height)
-	title, content := m.overlayContent(inner - 2)
-	content = wrap(content, inner-2)
+	title, _ := m.overlayContent(inner - 2)
+	allLines := m.overlayDocumentLines(inner - 2)
+	if m.mode == responseSearchMode {
+		title = "/ " + m.input + "▊"
+	} else if m.overlaySearch != "" {
+		title += " /" + m.overlaySearch
+	}
 
 	titleText := fmt.Sprintf("─ %s ", title)
 	top := "┌" + lipgloss.NewStyle().Foreground(blue).Bold(true).Render(titleText) + strings.Repeat("─", max(0, inner-lipgloss.Width(titleText))) + "┐"
 
-	hint := "[esc] close  [j/k] scroll"
+	hint := "[esc] close  [j/k] scroll  [g/G] top/end  [/] search  [n/N] match"
 	switch m.overlay {
 	case describeOverlay, yamlOverlay:
 		hint += "  [e] edit  [r] run"
@@ -1694,7 +1732,6 @@ func (m *Model) renderOverlay(width, height int) string {
 		hint += "  [r] run again"
 	}
 
-	allLines := strings.Split(content, "\n")
 	available := max(1, height-3) // top border, footer line, bottom border
 	maxOffset := max(0, len(allLines)-available)
 	if m.overlayOffset > maxOffset {
@@ -1711,7 +1748,13 @@ func (m *Model) renderOverlay(width, height int) string {
 		styleLine = highlightYAMLLine
 	}
 	for index := m.overlayOffset; index < end; index++ {
-		lines = append(lines, m.frameLine(" "+styleLine(allLines[index]), inner))
+		line := styleLine(allLines[index])
+		if m.overlaySearch != "" && strings.Contains(strings.ToLower(allLines[index]), strings.ToLower(m.overlaySearch)) {
+			matches := m.overlaySearchMatches()
+			current := m.overlayMatch >= 0 && m.overlayMatch < len(matches) && matches[m.overlayMatch] == index
+			line = highlightSearchLine(ansi.Strip(line), m.overlaySearch, current)
+		}
+		lines = append(lines, m.frameLine(" "+line, inner))
 	}
 	for len(lines) < height-2 {
 		lines = append(lines, m.frameLine("", inner))
@@ -1724,6 +1767,55 @@ func (m *Model) renderOverlay(width, height int) string {
 	lines = append(lines, m.frameLine(footer, inner))
 	lines = append(lines, "└"+strings.Repeat("─", inner)+"┘")
 	return strings.Join(lines, "\n")
+}
+
+func (m *Model) overlayContentWidth() int {
+	return max(1, max(m.width, 50)-4)
+}
+
+func (m *Model) overlayAvailable() int {
+	width := max(m.width, 50)
+	header := m.renderHeader(width)
+	height := max(m.height, 12) - lipgloss.Height(header) - 1
+	return max(1, max(6, height)-3)
+}
+
+func (m *Model) overlayDocumentLines(width int) []string {
+	_, content := m.overlayContent(width)
+	return strings.Split(wrap(content, width), "\n")
+}
+
+func (m *Model) overlaySearchMatches() []int {
+	if m.overlaySearch == "" {
+		return nil
+	}
+	query := strings.ToLower(m.overlaySearch)
+	matches := []int{}
+	for index, line := range m.overlayDocumentLines(m.overlayContentWidth()) {
+		if strings.Contains(strings.ToLower(line), query) {
+			matches = append(matches, index)
+		}
+	}
+	return matches
+}
+
+func (m *Model) jumpToOverlayMatch(next bool) {
+	matches := m.overlaySearchMatches()
+	if len(matches) == 0 {
+		m.message = "No matches for /" + m.overlaySearch
+		return
+	}
+	if m.overlayMatch < 0 || m.overlayMatch >= len(matches) {
+		m.overlayMatch = 0
+	} else if next {
+		m.overlayMatch = (m.overlayMatch + 1) % len(matches)
+	} else {
+		m.overlayMatch = (m.overlayMatch - 1 + len(matches)) % len(matches)
+	}
+	lines := m.overlayDocumentLines(m.overlayContentWidth())
+	available := m.overlayAvailable()
+	m.overlayOffset = clampOffset(matches[m.overlayMatch]-available/2, len(lines), available)
+	m.message = fmt.Sprintf("Match %d/%d for /%s", m.overlayMatch+1, len(matches), m.overlaySearch)
 }
 
 func (m *Model) overlayContent(width int) (string, string) {

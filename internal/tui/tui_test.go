@@ -408,6 +408,31 @@ func TestResponseInspectorNavigationAndSearch(t *testing.T) {
 	}
 }
 
+func TestReadonlyOverlayUsesSearchViewer(t *testing.T) {
+	m := testModel()
+	m.width, m.height = 100, 24
+	m.overlay = helpOverlay
+	_, _ = m.handleKey("/")
+	_, _ = m.handleKey("n")
+	_, _ = m.handleKey("enter")
+	if m.overlaySearch != "n" || m.overlayMatch < 0 {
+		t.Fatalf("readonly overlay search was not applied: query=%q match=%d", m.overlaySearch, m.overlayMatch)
+	}
+	if !strings.Contains(ansi.Strip(m.renderOverlay(100, 16)), "Keyboard shortcuts /n") {
+		t.Fatal("readonly overlay did not show its search query")
+	}
+	if matches := m.overlaySearchMatches(); len(matches) == 0 {
+		t.Fatal("readonly overlay search did not find help content")
+	}
+}
+
+func TestSearchHighlightPreservesUnmatchedText(t *testing.T) {
+	rendered := ansi.Strip(highlightSearchLine("alpha beta alpha", "alpha", false))
+	if rendered != "alpha beta alpha" {
+		t.Fatalf("search highlighting changed unmatched text: %q", rendered)
+	}
+}
+
 func TestBackingOutOfRunningRequestCancelsAndDiscardsResult(t *testing.T) {
 	ws := &model.Workspace{Name: "Demo", Root: "/tmp/demo", Requests: []model.Request{{ID: "users.get", Name: "Get", Method: "GET", URL: "https://x"}}}
 	m := NewModel(context.Background(), "/tmp/demo", "", &app.App{Workspace: ws})
