@@ -17,7 +17,9 @@ import (
 	"github.com/jagadishg/arbor/internal/buildinfo"
 	"github.com/jagadishg/arbor/internal/config"
 	"github.com/jagadishg/arbor/internal/model"
+	"github.com/jagadishg/arbor/internal/schema"
 	"github.com/jagadishg/arbor/internal/secrets"
+	arborskill "github.com/jagadishg/arbor/internal/skill"
 	"github.com/jagadishg/arbor/internal/variables"
 	"github.com/jagadishg/arbor/internal/workspace"
 	"github.com/spf13/cobra"
@@ -70,7 +72,7 @@ func New(options Options) *cobra.Command {
 	root.SetErr(options.ErrOut)
 	root.PersistentFlags().StringVarP(&environment, "env", "e", "", "environment to use")
 	root.PersistentFlags().StringVarP(&workspaceName, "workspace", "w", "", "registered workspace to target")
-	root.AddCommand(initCommand(options), newCommand(options), registerCommand(options), workspacesCommand(options), unregisterCommand(options), configCommand(options), validateCommand(options), listCommand(options), describeCommand(options, &environment), runCommand(options, &environment), scenarioCommand(options, &environment), secretCommand(options, &environment))
+	root.AddCommand(initCommand(options), newCommand(options), registerCommand(options), workspacesCommand(options), unregisterCommand(options), configCommand(options), validateCommand(options), contextCommand(options), schemaCommand(options), explainCommand(options), skillCommand(options), listCommand(options), describeCommand(options, &environment), runCommand(options, &environment), scenarioCommand(options, &environment), secretCommand(options, &environment))
 	return root
 }
 
@@ -115,7 +117,7 @@ func resolveTUITarget(options Options, workspaceName string) (string, error) {
 	}
 	if cfg, err := config.Load(); err == nil {
 		if cfg.LastWorkspace != "" {
-			if _, err := os.Stat(filepath.Join(cfg.LastWorkspace, workspace.ConfigName)); err == nil {
+			if _, err := workspace.FindRoot(cfg.LastWorkspace); err == nil {
 				return cfg.LastWorkspace, nil
 			}
 		}
@@ -123,7 +125,7 @@ func resolveTUITarget(options Options, workspaceName string) (string, error) {
 		// left lastWorkspace unset — or a stale last-used path — still opens the
 		// registry instead of erroring out.
 		for _, entry := range cfg.Workspaces {
-			if _, err := os.Stat(filepath.Join(entry.Path, workspace.ConfigName)); err == nil {
+			if _, err := workspace.FindRoot(entry.Path); err == nil {
 				return entry.Path, nil
 			}
 		}
@@ -231,7 +233,7 @@ func newCollectionCommand(options Options) *cobra.Command {
 		}
 		name := safeName(args[0])
 		value := model.Collection{Version: model.SchemaVersion, Kind: "collection", Name: name, Description: description}
-		path := filepath.Join(root, "collections", name, "collection.yaml")
+		path := filepath.Join(workspace.DataDir(root), "collections", name, "collection.yaml")
 		if err := writeResource(path, value); err != nil {
 			return err
 		}
@@ -253,7 +255,7 @@ func newRequestCommand(options Options) *cobra.Command {
 			name = displayName(args[0])
 		}
 		value := model.Request{Version: model.SchemaVersion, Kind: "request", ID: args[0], Name: name, Method: strings.ToUpper(method), URL: rawURL}
-		path := filepath.Join(root, "collections", refPath(args[0])+".yaml")
+		path := filepath.Join(workspace.DataDir(root), "collections", refPath(args[0])+".yaml")
 		if err := writeResource(path, value); err != nil {
 			return err
 		}
@@ -273,7 +275,7 @@ func newEnvironmentCommand(options Options) *cobra.Command {
 			return err
 		}
 		value := model.Environment{Version: model.SchemaVersion, Kind: "environment", Name: args[0], Variables: map[string]string{"base_url": "http://localhost:8080"}}
-		path := filepath.Join(root, "environments", safeName(args[0])+".yaml")
+		path := filepath.Join(workspace.DataDir(root), "environments", safeName(args[0])+".yaml")
 		if err := writeResource(path, value); err != nil {
 			return err
 		}
@@ -293,7 +295,7 @@ func newScenarioCommand(options Options) *cobra.Command {
 			return errors.New("--request is required for the first step")
 		}
 		value := model.Scenario{Version: model.SchemaVersion, Kind: "scenario", ID: args[0], Name: displayName(args[0]), Steps: []model.ScenarioStep{{Request: request}}}
-		path := filepath.Join(root, "scenarios", refPath(args[0])+".yaml")
+		path := filepath.Join(workspace.DataDir(root), "scenarios", refPath(args[0])+".yaml")
 		if err := writeResource(path, value); err != nil {
 			return err
 		}
@@ -453,12 +455,17 @@ func initialize(directory, name string) error {
 	if err != nil {
 		return err
 	}
-	config := filepath.Join(root, workspace.ConfigName)
+	workspaceRoot := filepath.Join(root, workspace.WorkspaceDirName)
+	config := filepath.Join(workspaceRoot, workspace.ConfigName)
+	if _, err := os.Stat(filepath.Join(root, workspace.ConfigName)); err == nil {
+		config = filepath.Join(root, workspace.ConfigName)
+		workspaceRoot = root
+	}
 	if _, err := os.Stat(config); err == nil {
 		return fmt.Errorf("%s already exists", config)
 	}
 	for _, dir := range []string{"collections", "environments", "scenarios"} {
-		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(workspaceRoot, dir), 0o755); err != nil {
 			return err
 		}
 	}
@@ -467,14 +474,14 @@ func initialize(directory, name string) error {
 		return err
 	}
 	environment := "version: 1\nkind: environment\nname: local\n\nvariables:\n  base_url: http://localhost:8080\n"
-	if err := os.WriteFile(filepath.Join(root, "environments", "local.yaml"), []byte(environment), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(workspaceRoot, "environments", "local.yaml"), []byte(environment), 0o644); err != nil {
 		return err
 	}
-	collectionDir := filepath.Join(root, "collections", "example")
+	collectionDir := filepath.Join(workspaceRoot, "collections", "example")
 	if err := os.MkdirAll(collectionDir, 0o755); err != nil {
 		return err
 	}
-	collection := "version: 1\nkind: collection\nname: example\ndescription: Group related requests under collections/<name>/. Delete this once you add your own.\n"
+	collection := "version: 1\nkind: collection\nname: example\ndescription: Group related requests under .arbor/collections/<name>/. Delete this once you add your own.\n"
 	return os.WriteFile(filepath.Join(collectionDir, "collection.yaml"), []byte(collection), 0o644)
 }
 
@@ -491,6 +498,119 @@ func validateCommand(options Options) *cobra.Command {
 		fmt.Fprintf(options.Out, "✓ %s: %d requests, %d environments, %d scenarios\n", loaded.Workspace.Name, len(loaded.Workspace.Requests), len(loaded.Workspace.Environments), len(loaded.Workspace.Scenarios))
 		return nil
 	}}
+}
+
+func contextCommand(options Options) *cobra.Command {
+	return &cobra.Command{Use: "context", Short: "Print the workspace context for agents", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
+		dir, err := options.Resolve()
+		if err != nil {
+			return err
+		}
+		loaded, err := app.Load(dir)
+		if err != nil {
+			return err
+		}
+		payload := map[string]any{
+			"schemaVersion": model.SchemaVersion,
+			"workspace": map[string]any{
+				"name": loaded.Workspace.Name, "description": loaded.Workspace.Description,
+				"defaultEnvironment": loaded.Workspace.DefaultEnv, "file": relPath(loaded.Workspace.Root, loaded.Workspace.Path),
+				"variables": loaded.Workspace.Variables,
+			},
+			"collections":  listPayload(loaded.Workspace, "collections"),
+			"requests":     listPayload(loaded.Workspace, "requests"),
+			"environments": listPayload(loaded.Workspace, "environments"),
+			"scenarios":    listPayload(loaded.Workspace, "scenarios"),
+			"instructions": map[string]any{
+				"definitionSource": "filesystem",
+				"validate":         "arbor validate",
+				"secrets":          []string{"Use env://NAME or keychain://service/account; never write secret values."},
+			},
+		}
+		return json.NewEncoder(options.Out).Encode(payload)
+	}}
+}
+
+func schemaCommand(options Options) *cobra.Command {
+	return &cobra.Command{Use: "schema <kind>", Short: "Print the JSON schema for a resource kind", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
+		data, err := schema.JSON(args[0])
+		if err != nil {
+			return err
+		}
+		if _, err := options.Out.Write(data); err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(options.Out)
+		return err
+	}}
+}
+
+func explainCommand(options Options) *cobra.Command {
+	return &cobra.Command{Use: "explain <topic>", Short: "Print Arbor authoring guidance", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
+		if args[0] != "workspace-format" {
+			return fmt.Errorf("unsupported topic %q; choose workspace-format", args[0])
+		}
+		data, err := arborskill.ReadReference("workspace-format.md")
+		if err != nil {
+			return err
+		}
+		_, err = options.Out.Write(data)
+		return nil
+	}}
+}
+
+func skillCommand(options Options) *cobra.Command {
+	var agent string
+	command := &cobra.Command{Use: "skill", Short: "Install Arbor's coding-agent skill"}
+	installRun := func(*cobra.Command, []string) error {
+		targets, err := arborskill.Install(agent)
+		if err != nil {
+			return err
+		}
+		for _, target := range targets {
+			fmt.Fprintf(options.Out, "Installed %s skill at %s\n", target.Agent, target.Path)
+		}
+		return nil
+	}
+	install := &cobra.Command{Use: "install", Short: "Install the Arbor skill for Codex, Claude, or both", Args: cobra.NoArgs, RunE: installRun}
+	update := &cobra.Command{Use: "update", Short: "Update the Arbor skill for Codex, Claude, or both", Args: cobra.NoArgs, RunE: installRun}
+	initProject := &cobra.Command{Use: "init", Short: "Add project-local Arbor agent instructions", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
+		created, instructions, err := arborskill.InitProject(options.Dir)
+		if err != nil {
+			return err
+		}
+		if created {
+			fmt.Fprintf(options.Out, "Created Arbor agent instructions at %s\n", filepath.Join(options.Dir, "AGENTS.md"))
+			return nil
+		}
+		fmt.Fprintf(options.Out, "AGENTS.md already exists. Add this Arbor section if it fits the repository's instructions:\n\n%s", instructions)
+		return nil
+	}}
+	status := &cobra.Command{Use: "status", Short: "Show Arbor skill installation status", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
+		targets, err := arborskill.Status(agent)
+		if err != nil {
+			return err
+		}
+		for _, target := range targets {
+			fmt.Fprintf(options.Out, "%s: %s\n", target.Agent, target.Path)
+		}
+		return nil
+	}}
+	uninstall := &cobra.Command{Use: "uninstall", Short: "Remove the Arbor skill for Codex, Claude, or both", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
+		targets, err := arborskill.Uninstall(agent)
+		if err != nil {
+			return err
+		}
+		for _, target := range targets {
+			fmt.Fprintf(options.Out, "Uninstalled %s skill from %s\n", target.Agent, target.Path)
+		}
+		return nil
+	}}
+	for _, child := range []*cobra.Command{install, update, initProject, status, uninstall} {
+		child.Flags().StringVar(&agent, "agent", "all", "agent to target: codex, claude, agents, or all")
+	}
+	command.AddCommand(install, update, initProject, status, uninstall)
+	return command
 }
 
 func listCommand(options Options) *cobra.Command {
@@ -551,25 +671,29 @@ func listPayload(ws *model.Workspace, resource string) any {
 	case "requests":
 		out := make([]map[string]any, 0, len(ws.Requests))
 		for _, item := range ws.Requests {
-			out = append(out, map[string]any{"ref": item.Ref(), "name": item.Name, "method": strings.ToUpper(item.Method), "url": item.URL, "collection": item.Collection, "description": item.Description})
+			out = append(out, map[string]any{"ref": item.Ref(), "name": item.Name, "method": strings.ToUpper(item.Method), "url": item.URL, "collection": item.Collection, "description": item.Description, "file": relPath(ws.Root, item.Path)})
 		}
 		return out
 	case "collections":
 		out := make([]map[string]any, 0, len(ws.Collections))
 		for _, item := range ws.Collections {
-			out = append(out, map[string]any{"name": item.Name, "requests": len(ws.RequestsInCollection(item.Name)), "description": item.Description})
+			entry := map[string]any{"name": item.Name, "requests": len(ws.RequestsInCollection(item.Name)), "description": item.Description}
+			if item.Path != "" {
+				entry["file"] = relPath(ws.Root, item.Path)
+			}
+			out = append(out, entry)
 		}
 		return out
 	case "environments":
 		out := make([]map[string]any, 0, len(ws.Environments))
 		for _, item := range ws.Environments {
-			out = append(out, map[string]any{"name": item.Name, "variables": len(item.Variables), "secrets": len(item.Secrets), "description": item.Description})
+			out = append(out, map[string]any{"name": item.Name, "variables": len(item.Variables), "secrets": len(item.Secrets), "description": item.Description, "file": relPath(ws.Root, item.Path)})
 		}
 		return out
 	case "scenarios":
 		out := make([]map[string]any, 0, len(ws.Scenarios))
 		for _, item := range ws.Scenarios {
-			out = append(out, map[string]any{"ref": item.Ref(), "name": item.Name, "steps": len(item.Steps), "description": item.Description})
+			out = append(out, map[string]any{"ref": item.Ref(), "name": item.Name, "steps": len(item.Steps), "description": item.Description, "file": relPath(ws.Root, item.Path)})
 		}
 		return out
 	}

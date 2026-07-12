@@ -14,6 +14,7 @@ import (
 )
 
 const ConfigName = "arbor.yaml"
+const WorkspaceDirName = ".arbor"
 
 type ValidationError struct {
 	Path    string
@@ -37,6 +38,17 @@ func FindRoot(start string) (string, error) {
 		abs = filepath.Dir(abs)
 	}
 	for {
+		// When called from inside a hidden workspace directory, return the
+		// project root so .arbor remains a data directory rather than becoming
+		// nested under itself in paths and TUI configuration.
+		if filepath.Base(abs) == WorkspaceDirName {
+			if _, err := os.Stat(filepath.Join(abs, ConfigName)); err == nil {
+				return filepath.Dir(abs), nil
+			}
+		}
+		if _, err := os.Stat(filepath.Join(abs, WorkspaceDirName, ConfigName)); err == nil {
+			return abs, nil
+		}
 		if _, err := os.Stat(filepath.Join(abs, ConfigName)); err == nil {
 			return abs, nil
 		}
@@ -46,7 +58,19 @@ func FindRoot(start string) (string, error) {
 		}
 		abs = parent
 	}
-	return "", fmt.Errorf("no %s found from %s", ConfigName, start)
+	return "", fmt.Errorf("no %s or %s/%s found from %s", ConfigName, WorkspaceDirName, ConfigName, start)
+}
+
+// DataDir returns the directory containing workspace definitions.
+func DataDir(root string) string {
+	if _, err := os.Stat(filepath.Join(root, WorkspaceDirName, ConfigName)); err == nil {
+		return filepath.Join(root, WorkspaceDirName)
+	}
+	return root
+}
+
+func ConfigPath(root string) string {
+	return filepath.Join(DataDir(root), ConfigName)
 }
 
 func Load(start string) (*model.Workspace, error) {
@@ -54,17 +78,18 @@ func Load(start string) (*model.Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
-	path := filepath.Join(root, ConfigName)
+	path := ConfigPath(root)
+	dataRoot := DataDir(root)
 	var ws model.Workspace
 	if err := decodeStrict(path, &ws); err != nil {
 		return nil, err
 	}
 	ws.Path, ws.Root = path, root
 
-	if err := loadCollections(root, &ws); err != nil {
+	if err := loadCollections(dataRoot, &ws); err != nil {
 		return nil, err
 	}
-	if err := loadKind(filepath.Join(root, "environments"), "environment", func(path string) error {
+	if err := loadKind(filepath.Join(dataRoot, "environments"), "environment", func(path string) error {
 		var value model.Environment
 		if err := decodeStrict(path, &value); err != nil {
 			return err
@@ -75,7 +100,7 @@ func Load(start string) (*model.Workspace, error) {
 	}); err != nil {
 		return nil, err
 	}
-	if err := loadKind(filepath.Join(root, "scenarios"), "scenario", func(path string) error {
+	if err := loadKind(filepath.Join(dataRoot, "scenarios"), "scenario", func(path string) error {
 		var value model.Scenario
 		if err := decodeStrict(path, &value); err != nil {
 			return err

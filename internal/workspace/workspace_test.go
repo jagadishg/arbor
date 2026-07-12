@@ -25,6 +25,26 @@ func TestLoadWorkspace(t *testing.T) {
 	}
 }
 
+func TestLoadHiddenWorkspace(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, ".arbor/arbor.yaml", "version: 1\nname: Hidden Demo\n")
+	write(t, root, ".arbor/collections/users/get.yaml", "version: 1\nkind: request\nid: users.get\nname: Get user\nmethod: GET\nurl: 'https://x/users/1'\n")
+
+	ws, err := Load(filepath.Join(root, "src"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if ws.Root != root || ws.Name != "Hidden Demo" || len(ws.Requests) != 1 {
+		t.Fatalf("unexpected hidden workspace: %#v", ws)
+	}
+	if got := filepath.ToSlash(filepath.Join(root, ".arbor", "arbor.yaml")); filepath.ToSlash(ws.Path) != got {
+		t.Fatalf("workspace path = %q, want %q", ws.Path, got)
+	}
+	if nested, err := FindRoot(filepath.Join(root, ".arbor", "collections")); err != nil || nested != root {
+		t.Fatalf("FindRoot from hidden workspace = %q, %v; want %q", nested, err, root)
+	}
+}
+
 func TestLoadRejectsUnknownFields(t *testing.T) {
 	root := t.TempDir()
 	write(t, root, "arbor.yaml", "version: 1\nname: Demo\nmystery: true\n")

@@ -88,20 +88,21 @@ arbor scenario httpbin.smoke
 
 ```text
 my-api/
-├── arbor.yaml
-├── collections/
-│   └── users/
-│       ├── collection.yaml
-│       ├── get.yaml
-│       └── create.yaml
-├── environments/
-│   ├── local.yaml
-│   └── staging.yaml
-└── scenarios/
-    └── user-lifecycle.yaml
+└── .arbor/
+    ├── arbor.yaml
+    ├── collections/
+    │   └── users/
+    │       ├── collection.yaml
+    │       ├── get.yaml
+    │       └── create.yaml
+    ├── environments/
+    │   ├── local.yaml
+    │   └── staging.yaml
+    └── scenarios/
+        └── user-lifecycle.yaml
 ```
 
-`arbor.yaml` marks the workspace root:
+Arbor recommends keeping project definitions under `.arbor/` to avoid conflicts with application directories. `.arbor/arbor.yaml` marks the workspace:
 
 ```yaml
 version: 1
@@ -115,7 +116,7 @@ http:
   timeout: 30s
 ```
 
-A request is a versioned YAML file anywhere under `collections/`:
+A request is a versioned YAML file anywhere under `.arbor/collections/`:
 
 ```yaml
 version: 1
@@ -141,8 +142,8 @@ extract:
   email: body.email
 ```
 
-The folder a request lives in is its **collection** (`collections/users/get.yaml` → the
-`users` collection). Add an optional `collections/users/collection.yaml` marker to give a
+The folder a request lives in is its **collection** (`.arbor/collections/users/get.yaml` → the
+`users` collection). Add an optional `.arbor/collections/users/collection.yaml` marker to give a
 collection a description. Every resource — workspace, request, collection, environment,
 scenario — accepts an optional `description` field. Descriptions are never sent over the
 wire; they exist so people *and* coding agents can understand a workspace without opening
@@ -236,7 +237,7 @@ The command exits non-zero when transport, extraction, or assertion failures occ
 
 ## Workspaces
 
-Each API project is its own workspace (its own `arbor.yaml`, collections, and environments).
+Each API project is its own workspace (its own `.arbor/arbor.yaml`, collections, and environments). In a monorepo, use one workspace per service unless the workspace intentionally models the whole API surface.
 Arbor keeps a central registry — like k9s remembering your clusters — so you can hop between
 projects without caring which directory you launched from. It lives at
 `~/.config/arbor/config.yaml` on every platform (honoring `XDG_CONFIG_HOME`, or override with
@@ -280,6 +281,12 @@ arbor new collection <name>        Create a collection
 arbor new environment <name>       Create an environment
 arbor new scenario <ref>           Create a scenario
 arbor validate                     Validate all workspace files
+arbor context --json               Print workspace context for coding agents
+arbor schema <kind>                Print the JSON schema for a resource kind
+arbor explain workspace-format     Print the workspace authoring guide
+arbor skill install --agent all    Install the Arbor skill for all supported agents
+arbor skill status                 Show installed Arbor agent skills
+arbor skill init                   Add project-local Arbor agent instructions
 arbor list requests                List request references
 arbor list collections             List collections
 arbor list environments            List environments
@@ -297,6 +304,20 @@ Add `-w <name>` to target a registered workspace from anywhere (e.g. `arbor run 
 `arbor describe <ref> --json` and `arbor list <resource> --json` emit machine-readable
 output — a discovery surface a coding agent can read to work in the workspace without
 opening each file.
+
+### Coding-agent skill
+
+Arbor includes a reusable skill for Codex, Claude, and the shared agent skill directory. Install it for all supported locations with:
+
+```bash
+arbor skill install --agent all
+```
+
+Codex installation writes to both `~/.codex/skills/` and the shared `~/.agents/skills/` directory. Use `--agent agents` to install only the shared copy; Claude uses `~/.claude/skills/`.
+
+Use `arbor skill status` to inspect the installation and `arbor skill update` after upgrading Arbor. `arbor skill init` creates a project-local `AGENTS.md`; if one already exists, it prints an Arbor section to add without overwriting repository instructions. The skill guides an agent to inspect an API codebase, create or update Arbor YAML resources, protect secrets, validate the workspace, and review the resulting Git diff. The YAML files remain the source of truth and can be edited by people, agents, or the CLI.
+
+`arbor context --json` includes each resource's relative YAML `file` path so agents can update the correct definition without scanning the entire workspace.
 
 Runtime variables can be supplied without editing files:
 

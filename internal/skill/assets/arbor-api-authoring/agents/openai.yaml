@@ -1,0 +1,6 @@
+interface:
+  display_name: "Arbor API authoring"
+  short_description: "Create and maintain Arbor API workspaces"
+  default_prompt: "Use $arbor-api-authoring to create or update Arbor requests from this API codebase."
+policy:
+  allow_implicit_invocation: true

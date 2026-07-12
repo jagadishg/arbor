@@ -1,6 +1,6 @@
 # Workspace format
 
-Arbor workspace files use strict YAML. Unknown fields are errors, and every file has a schema version. Paths shown below are relative to the directory containing `arbor.yaml`.
+Arbor workspace files use strict YAML. Unknown fields are errors, and every file has a schema version. Arbor recommends `.arbor/arbor.yaml` as the workspace marker; paths are relative to the workspace directory.
 
 Every resource accepts an optional `description` field. It is never sent over the wire; it exists so both people and coding agents can understand a workspace without reverse-engineering it. Descriptions appear in `arbor describe`, `arbor list`, and the interactive describe view.
 
