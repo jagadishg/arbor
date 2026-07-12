@@ -375,26 +375,36 @@ func TestResponseInspectorNavigationAndSearch(t *testing.T) {
 	if m.mode != responseSearchMode {
 		t.Fatalf("/ did not enter response search mode: %v", m.mode)
 	}
-	_, _ = m.handleKey("n")
+	_, _ = m.handleKey("e")
 	_, _ = m.handleKey("enter")
-	if m.responseSearch != "n" || m.mode != normalMode {
+	if m.responseSearch != "e" || m.mode != normalMode {
 		t.Fatalf("search was not committed: query=%q mode=%v", m.responseSearch, m.mode)
 	}
-	if !strings.Contains(ansi.Strip(m.renderSplit(100, 16)), "Response /n") {
+	if !strings.Contains(ansi.Strip(m.renderSplit(100, 16)), "Response /e") {
 		t.Fatal("committed search was not shown in the response pane title")
 	}
-	if len(m.responseSearchMatches(m.responseInnerWidth())) == 0 {
+	matches := m.responseSearchMatches(m.responseInnerWidth())
+	if len(matches) < 2 {
 		t.Fatal("search did not find response content")
 	}
 	_, _ = m.handleKey("n")
 	if !strings.Contains(m.message, "Match") {
 		t.Fatalf("n did not report the current match: %q", m.message)
 	}
-	_, _ = m.handleKey("G")
+	current := m.responseMatch
+	_, _ = m.handleKey("shift+n")
+	if m.responseMatch == current {
+		t.Fatal("shift+n did not move to the previous match")
+	}
+	_, _ = m.handleKey("shift+g")
 	layout := m.currentSplitLayout()
 	wantEnd := max(0, len(m.responsePaneLines(layout.responseWidth))-layout.available)
 	if m.responseOffset != wantEnd {
-		t.Fatalf("G moved to offset %d, want %d", m.responseOffset, wantEnd)
+		t.Fatalf("shift+g moved to offset %d, want %d", m.responseOffset, wantEnd)
+	}
+	_, _ = m.handleKey("/")
+	if m.mode != responseSearchMode || m.input != "" || m.responseSearch != "" {
+		t.Fatalf("new search did not clear the previous query: mode=%v input=%q search=%q", m.mode, m.input, m.responseSearch)
 	}
 }
 

@@ -302,7 +302,7 @@ func (m *Model) handleKey(key string) (tea.Model, tea.Cmd) {
 		m.move(-1)
 	case "g", "home":
 		m.selected = 0
-	case "G", "end":
+	case "G", "shift+g", "end":
 		if count := len(m.items()); count > 0 {
 			m.selected = count - 1
 		}
@@ -419,7 +419,7 @@ func (m *Model) handleSplitKey(key string) (tea.Model, tea.Cmd) {
 		}
 	case "g", "home":
 		*offset = 0
-	case "G", "end":
+	case "G", "shift+g", "end":
 		*offset = max(0, len(lines)-layout.available)
 	case "H":
 		*offset = 0
@@ -429,13 +429,14 @@ func (m *Model) handleSplitKey(key string) (tea.Model, tea.Cmd) {
 		*offset = max(0, len(lines)-layout.available)
 	case "/":
 		if m.focusedPane == paneResponse {
-			m.mode, m.input = responseSearchMode, m.responseSearch
+			m.mode, m.input = responseSearchMode, ""
+			m.responseSearch, m.responseMatch = "", -1
 		}
 	case "n":
 		if m.focusedPane == paneResponse {
 			m.jumpToResponseMatch(true)
 		}
-	case "N":
+	case "N", "shift+n":
 		if m.focusedPane == paneResponse {
 			m.jumpToResponseMatch(false)
 		}
@@ -1145,6 +1146,8 @@ var (
 	muted              = lipgloss.Color("#707A8C")
 	panel              = lipgloss.Color("#24283B")
 	selectedBackground = lipgloss.Color("#364A82")
+	searchBackground   = lipgloss.Color("#3B4252")
+	searchCurrent      = lipgloss.Color("#EBCB8B")
 	foreground         = lipgloss.Color("#C0CAF5")
 )
 
@@ -1490,11 +1493,7 @@ func (m *Model) responsePaneLines(inner int) []string {
 		}
 		for index, line := range lines {
 			if strings.Contains(strings.ToLower(document[index]), strings.ToLower(m.responseSearch)) {
-				color := selectedBackground
-				if index == current {
-					color = yellow
-				}
-				lines[index] = lipgloss.NewStyle().Background(color).Render(ansi.Strip(line))
+				lines[index] = highlightSearchLine(ansi.Strip(line), m.responseSearch, index == current)
 			}
 		}
 	}
@@ -1557,6 +1556,38 @@ func (m *Model) responseSearchMatches(inner int) []int {
 		}
 	}
 	return matches
+}
+
+func highlightSearchLine(line, query string, current bool) string {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return line
+	}
+	background := searchBackground
+	foregroundColor := foreground
+	if current {
+		background = searchCurrent
+		foregroundColor = lipgloss.Color("#1A1B26")
+	}
+	base := lipgloss.NewStyle().Foreground(foregroundColor)
+	match := lipgloss.NewStyle().Foreground(foregroundColor).Background(background).Bold(true)
+	lowerLine, lowerQuery := strings.ToLower(line), strings.ToLower(query)
+	var out strings.Builder
+	for len(lowerLine) > 0 {
+		index := strings.Index(lowerLine, lowerQuery)
+		if index < 0 {
+			out.WriteString(base.Render(line))
+			break
+		}
+		out.WriteString(base.Render(line[:index]))
+		end := index + len(query)
+		if end > len(line) {
+			end = len(line)
+		}
+		out.WriteString(match.Render(line[index:end]))
+		line, lowerLine = line[end:], lowerLine[end:]
+	}
+	return out.String()
 }
 
 func (m *Model) jumpToResponseMatch(next bool) {
