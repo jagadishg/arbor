@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Arbor — a terminal-native, local-first API workspace</title>
+  <meta name="description" content="Arbor brings the speed and familiarity of k9s to API development. Browse collections, switch environments, run requests, and inspect responses without leaving the terminal. Every workspace is readable YAML that belongs in Git." />
+  <meta property="og:title" content="Arbor — a terminal-native API workspace" />
+  <meta property="og:description" content="k9s-style speed for API development. Readable YAML, local-first, one engine across TUI, CLI, and CI." />
+  <meta property="og:type" content="website" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/asciinema-player@3.8.0/dist/bundle/asciinema-player.css" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header class="nav">
+    <a class="brand" href="#top"><span class="leaf">❦</span> Arbor</a>
+    <nav>
+      <a href="#features">Features</a>
+      <a href="#watch">Watch</a>
+      <a href="#quickstart">Quickstart</a>
+      <a class="gh" href="https://github.com/jagadishg/arbor" target="_blank" rel="noopener">GitHub ↗</a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <p class="eyebrow">terminal-native · local-first · git-friendly</p>
+      <h1>The API workspace that<br/>lives in your terminal.</h1>
+      <p class="lede">Arbor brings the speed and familiarity of <strong>k9s</strong> to API development. Browse collections, switch environments, run requests, and inspect responses — without leaving the keyboard. Every workspace is readable YAML that belongs in Git.</p>
+      <div class="cta">
+        <a class="btn primary" href="#quickstart">Get started</a>
+        <a class="btn ghost" href="https://github.com/jagadishg/arbor" target="_blank" rel="noopener">Star on GitHub</a>
+      </div>
+      <div class="install">
+        <code>brew install jagadishg/tap/arbor</code>
+        <button class="copy" data-copy="brew install jagadishg/tap/arbor" title="Copy">copy</button>
+      </div>
+    </section>
+
+    <section class="showcase">
+      <div class="window">
+        <div class="titlebar"><span></span><span></span><span></span><p>arbor</p></div>
+        <img src="./demo/tui.gif" alt="Arbor terminal UI: browsing a request, running it, and inspecting the split request/response view" loading="lazy" />
+      </div>
+    </section>
+
+    <section id="features">
+      <h2>Why Arbor?</h2>
+      <div class="grid">
+        <article><h3>⌨️ Terminal native</h3><p>Fast keyboard workflows, Vim navigation, fuzzy filtering, command mode, and contextual help.</p></article>
+        <article><h3>📁 Local first</h3><p>No account, cloud workspace, or background service. Your API lives on your machine.</p></article>
+        <article><h3>🌿 Git friendly</h3><p>Requests, environments, and scenarios are ordinary YAML files you can diff and review.</p></article>
+        <article><h3>⚙️ One engine everywhere</h3><p>The TUI, command line, and CI execute the exact same definitions.</p></article>
+        <article><h3>🔒 Secrets stay secret</h3><p>Resolve values from env vars or the OS keychain, with automatic redaction and reveal-on-demand.</p></article>
+        <article><h3>🤖 Agent ready</h3><p>Descriptions on every resource and <code>--json</code> output make a workspace legible to coding agents.</p></article>
+      </div>
+    </section>
+
+    <section id="watch">
+      <h2>See it in action</h2>
+      <div class="tabs">
+        <button class="tab active" data-tab="tui">Interactive TUI</button>
+        <button class="tab" data-tab="cli">Command line</button>
+      </div>
+      <div class="player" id="player-tui"></div>
+      <div class="player hidden" id="player-cli"></div>
+      <p class="hint">Same workspace, same definitions — explored two ways.</p>
+    </section>
+
+    <section id="quickstart">
+      <h2>Quickstart</h2>
+      <p class="lede">Create a workspace, add a request, and run it — then open the TUI.</p>
+      <pre><code><span class="c"># install</span>
+brew install jagadishg/tap/arbor
+
+<span class="c"># create a workspace, a collection, and a request</span>
+arbor init myapi && cd myapi
+arbor new collection users -d "User endpoints"
+arbor new request users.get -m GET -u '{{base_url}}/users/1' -n "Get user"
+
+<span class="c"># explore and run from the CLI</span>
+arbor list requests
+arbor describe users.get
+arbor run users.get
+
+<span class="c"># or open the interactive terminal UI</span>
+arbor</code></pre>
+    </section>
+  </main>
+
+  <footer>
+    <p><span class="leaf">❦</span> Arbor — a terminal-native, local-first API workspace.</p>
+    <p><a href="https://github.com/jagadishg/arbor" target="_blank" rel="noopener">github.com/jagadishg/arbor</a> · MIT licensed</p>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/asciinema-player@3.8.0/dist/bundle/asciinema-player.min.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

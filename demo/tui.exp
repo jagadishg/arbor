@@ -1,0 +1,53 @@
+#!/usr/bin/env expect -f
+# Drives Arbor's TUI for the demo recording. Launches arbor inside asciinema so
+# the session is recorded, then sends keystrokes with pauses to browse a
+# request, run it against the local mock, inspect the sent request, and copy.
+#
+# Args: <cast-output-path> <workspace-dir>
+set cast [lindex $argv 0]
+set workspace [lindex $argv 1]
+
+set stty_init "rows 30 cols 110"
+set timeout 60
+
+# Record arbor via asciinema; asciinema forwards our keystrokes to arbor.
+spawn asciinema rec $cast --overwrite -f asciicast-v2 -c "bash -c 'cd $workspace && arbor'"
+
+# Let the resource list render.
+sleep 2.5
+
+# Describe the selected request, then back out.
+send -- "\r"
+sleep 2.5
+send -- "q"
+sleep 1.2
+
+# Run the request -> opens the request/response split view.
+send -- "r"
+sleep 3.0
+
+# Focus the request pane to show the actual sent request.
+send -- "\t"
+sleep 2.5
+
+# Toggle to the raw YAML definition and back.
+send -- "y"
+sleep 2.2
+send -- "y"
+sleep 1.5
+
+# Copy the request as a curl command (status line confirms).
+send -- "c"
+sleep 2.2
+
+# Focus the response pane and copy the body.
+send -- "\t"
+sleep 1.2
+send -- "c"
+sleep 2.0
+
+# Close the split view, then quit.
+send -- "q"
+sleep 1.2
+send -- "\003"
+expect eof

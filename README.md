@@ -4,21 +4,17 @@
 
 Arbor brings the speed and familiarity of k9s to API development. Browse collections, switch environments, run requests, inspect responses, and execute test scenarios without leaving the terminal. Every workspace is made of readable YAML files that belong in Git.
 
-```text
- ARBOR   Acme API                                              env: staging
- Requests                     Get current user
- 3 items
-                              GET  {{base_url}}/users/me
- › users.me       GET
-   users.create   POST        Reference: users.me
-   users.delete   DELETE      File: collections/users/me.yaml
+**[▶ See the live demo and docs →](https://jagadishg.github.io/arbor/)**
 
-                              Assertions
-                                • status == 200
-                                • body.id != null
+<p align="center">
+  <img src="docs/demo/tui.gif" alt="Arbor terminal UI: browse a request, run it, and inspect the split request/response view" width="820" />
+</p>
 
- Ready                 [enter] run  [e] edit  [/] filter  [:] command  [?] help
-```
+Create a workspace, add a request, and run it — all from the command line:
+
+<p align="center">
+  <img src="docs/demo/cli.gif" alt="Creating an Arbor workspace, collection, and request, then running it from the CLI" width="820" />
+</p>
 
 ## Why Arbor?
 
