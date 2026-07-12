@@ -73,6 +73,7 @@ type viewLocation struct {
 }
 
 type requestDoneMsg model.RequestResult
+type requestTickMsg time.Time
 type scenarioDoneMsg model.ScenarioReport
 type reloadDoneMsg struct {
 	app     *app.App
@@ -108,21 +109,25 @@ type Model struct {
 	filterSave string
 	suggestion int
 
-	overlay        overlay
-	overlayOffset  int
-	focusedPane    pane
-	requestOffset  int
-	responseOffset int
-	width          int
-	height         int
-	running        bool
-	cancel         context.CancelFunc
-	requestResult  *model.RequestResult
-	scenarioReport *model.ScenarioReport
-	message        string
-	aliases        map[string]string
-	hotkeys        map[string]hotkey
-	workspaces     []config.Entry
+	overlay               overlay
+	overlayOffset         int
+	focusedPane           pane
+	requestOffset         int
+	responseOffset        int
+	width                 int
+	height                int
+	running               bool
+	cancel                context.CancelFunc
+	requestStarted        time.Time
+	spinner               int
+	discardResult         bool
+	restoreSplitAfterEdit bool
+	requestResult         *model.RequestResult
+	scenarioReport        *model.ScenarioReport
+	message               string
+	aliases               map[string]string
+	hotkeys               map[string]hotkey
+	workspaces            []config.Entry
 }
 
 type suggestion struct {
@@ -166,12 +171,22 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 	case requestDoneMsg:
 		result := model.RequestResult(msg)
+		if m.discardResult {
+			m.running, m.cancel, m.discardResult = false, nil, false
+			m.requestResult = nil
+			return m, nil
+		}
 		m.running, m.cancel, m.requestResult, m.scenarioReport = false, nil, &result, nil
 		m.overlay, m.focusedPane, m.requestOffset, m.responseOffset = responseOverlay, paneResponse, 0, 0
 		if result.Passed() {
 			m.message = "Request completed"
 		} else {
 			m.message = "Request failed"
+		}
+	case requestTickMsg:
+		if m.running {
+			m.spinner++
+			return m, tea.Tick(time.Second, func(t time.Time) tea.Msg { return requestTickMsg(t) })
 		}
 	case scenarioDoneMsg:
 		report := model.ScenarioReport(msg)
@@ -187,7 +202,21 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.message = "Reload failed: " + msg.err.Error()
 		} else {
 			m.app, m.aliases, m.hotkeys, m.selected = msg.app, msg.aliases, msg.hotkeys, 0
-			m.message = "Workspace reloaded"
+			if m.restoreSplitAfterEdit && m.requestResult != nil {
+				ref := m.requestResult.Request.Ref()
+				if request, ok := m.app.Workspace.RequestByRef(ref); ok {
+					m.requestResult.Request = request
+					m.overlay, m.focusedPane = responseOverlay, paneRequest
+					m.requestOffset, m.responseOffset = 0, 0
+					m.message = "Request updated"
+				} else {
+					m.overlay, m.requestResult = noOverlay, nil
+					m.message = "Request was removed"
+				}
+				m.restoreSplitAfterEdit = false
+			} else {
+				m.message = "Workspace reloaded"
+			}
 		}
 	case editorDoneMsg:
 		if msg.err != nil {
@@ -302,14 +331,19 @@ func (m *Model) inSplitView() bool {
 }
 
 func (m *Model) handleSplitKey(key string) (tea.Model, tea.Cmd) {
-	step := max(1, m.modalHeight()/3)
+	lineStep := 1
+	pageStep := max(1, m.modalHeight()-3)
 	offset := &m.responseOffset
 	if m.focusedPane == paneRequest {
 		offset = &m.requestOffset
 	}
 	switch key {
 	case "q", "esc":
-		m.overlay = noOverlay
+		if m.running {
+			m.cancelRunningRequest(true)
+		} else {
+			m.overlay = noOverlay
+		}
 	case "ctrl+c":
 		if m.running && m.cancel != nil {
 			m.cancel()
@@ -328,9 +362,17 @@ func (m *Model) handleSplitKey(key string) (tea.Model, tea.Cmd) {
 	case "l", "right":
 		m.focusedPane = paneResponse
 	case "j", "down", "ctrl+d", "pagedown":
-		*offset += step
+		if key == "j" || key == "down" {
+			*offset += lineStep
+		} else {
+			*offset += pageStep
+		}
 	case "k", "up", "ctrl+u", "pageup":
-		*offset = max(0, *offset-step)
+		if key == "k" || key == "up" {
+			*offset = max(0, *offset-lineStep)
+		} else {
+			*offset = max(0, *offset-pageStep)
+		}
 	case "g", "home":
 		*offset = 0
 	case "e":
@@ -345,6 +387,7 @@ func (m *Model) handleSplitKey(key string) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) editRequestInView() tea.Cmd {
+	m.restoreSplitAfterEdit = true
 	path := m.requestResult.Request.Path
 	if path == "" {
 		path = m.app.Workspace.Path
@@ -378,6 +421,7 @@ func (m *Model) handleOverlayKey(key string) (tea.Model, tea.Cmd) {
 	case "e":
 		if m.overlay == yamlOverlay || m.overlay == describeOverlay {
 			m.overlay = noOverlay
+			m.restoreSplitAfterEdit = false
 			return m, m.editSelected()
 		}
 	case "r":
@@ -732,9 +776,26 @@ func (m *Model) runRequest(ref string) tea.Cmd {
 		return nil
 	}
 	ctx, cancel := context.WithCancel(m.ctx)
+	request, _ := m.app.Workspace.RequestByRef(ref)
 	m.running, m.cancel, m.message = true, cancel, "Running "+ref+"…"
+	m.requestStarted, m.spinner, m.discardResult = time.Now(), 0, false
+	m.requestResult = &model.RequestResult{Request: request}
+	m.overlay, m.focusedPane, m.requestOffset, m.responseOffset = responseOverlay, paneResponse, 0, 0
 	loaded, environment := m.app, m.environment
-	return func() tea.Msg { return requestDoneMsg(loaded.RunRequest(ctx, ref, environment, nil)) }
+	requestCmd := func() tea.Msg { return requestDoneMsg(loaded.RunRequest(ctx, ref, environment, nil)) }
+	return tea.Batch(requestCmd, tea.Tick(time.Second, func(t time.Time) tea.Msg { return requestTickMsg(t) }))
+}
+
+func (m *Model) cancelRunningRequest(closeView bool) {
+	if m.cancel != nil {
+		m.cancel()
+	}
+	m.message = "Cancelling request…"
+	m.discardResult = closeView
+	if closeView {
+		m.overlay = noOverlay
+		m.requestResult = nil
+	}
 }
 
 // requireEnvironment blocks a run when the workspace defines environments but
@@ -1277,6 +1338,17 @@ func (m *Model) requestPaneLines(inner int) []string {
 
 func (m *Model) responsePaneLines(inner int) []string {
 	result := m.requestResult
+	if m.running {
+		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		frame := frames[m.spinner%len(frames)]
+		elapsed := time.Since(m.requestStarted).Round(time.Second)
+		return []string{
+			lipgloss.NewStyle().Foreground(blue).Bold(true).Render(frame + " Running request…"),
+			lipgloss.NewStyle().Foreground(muted).Render("Elapsed " + elapsed.String()),
+			"",
+			lipgloss.NewStyle().Foreground(muted).Render("Press q or esc to cancel and go back"),
+		}
+	}
 	if result.Error != nil {
 		lines := []string{lipgloss.NewStyle().Foreground(red).Bold(true).Render("Request failed"), ""}
 		for _, line := range strings.Split(wrap(result.Error.Error(), inner), "\n") {

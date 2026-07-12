@@ -283,7 +283,7 @@ func TestJSONHighlighting(t *testing.T) {
 }
 
 func TestSplitViewFocusAndScroll(t *testing.T) {
-	ws := &model.Workspace{Name: "Demo", Root: "/tmp/demo", Requests: []model.Request{{ID: "users.get", Name: "Get", Method: "GET", URL: "https://x"}}}
+	ws := &model.Workspace{Name: "Demo", Root: "/tmp/demo", Requests: []model.Request{{ID: "users.get", Name: "Get", Method: "GET", URL: strings.Repeat("https://x/", 20)}}}
 	m := NewModel(context.Background(), "/tmp/demo", "", &app.App{Workspace: ws})
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
 	m.requestResult = &model.RequestResult{Request: ws.Requests[0], Response: &model.Response{Status: "200 OK", StatusCode: 200, Body: []byte(`{"a":1}`)}}
@@ -305,6 +305,51 @@ func TestSplitViewFocusAndScroll(t *testing.T) {
 	_, _ = m.handleKey("l")
 	if m.focusedPane != paneResponse {
 		t.Fatal("l did not focus response")
+	}
+}
+
+func TestRunRequestOpensLiveSplitView(t *testing.T) {
+	ws := &model.Workspace{Name: "Demo", Root: "/tmp/demo", Requests: []model.Request{{ID: "users.get", Name: "Get", Method: "GET", URL: "https://x"}}}
+	m := NewModel(context.Background(), "/tmp/demo", "", &app.App{Workspace: ws})
+	cmd := m.runRequest("users.get")
+	if cmd == nil {
+		t.Fatal("runRequest returned no command")
+	}
+	if !m.running || !m.inSplitView() || m.requestResult == nil {
+		t.Fatalf("request did not open live split view: running=%v split=%v result=%#v", m.running, m.inSplitView(), m.requestResult)
+	}
+	if m.requestResult.Response != nil {
+		t.Fatal("live request unexpectedly has a response")
+	}
+	if lines := m.responsePaneLines(40); !strings.Contains(strings.Join(lines, "\n"), "Running request") {
+		t.Fatalf("running response pane missing status: %v", lines)
+	}
+}
+
+func TestBackingOutOfRunningRequestCancelsAndDiscardsResult(t *testing.T) {
+	ws := &model.Workspace{Name: "Demo", Root: "/tmp/demo", Requests: []model.Request{{ID: "users.get", Name: "Get", Method: "GET", URL: "https://x"}}}
+	m := NewModel(context.Background(), "/tmp/demo", "", &app.App{Workspace: ws})
+	m.runRequest("users.get")
+	_, _ = m.handleKey("q")
+	if m.overlay != noOverlay || !m.discardResult {
+		t.Fatalf("backing out did not cancel live view: overlay=%v discard=%v", m.overlay, m.discardResult)
+	}
+	_, _ = m.Update(requestDoneMsg(model.RequestResult{Request: ws.Requests[0], Response: &model.Response{Status: "200 OK"}}))
+	if m.overlay != noOverlay || m.running || m.requestResult != nil {
+		t.Fatalf("cancelled result reopened or remained active: overlay=%v running=%v result=%#v", m.overlay, m.running, m.requestResult)
+	}
+}
+
+func TestReloadAfterSplitEditRestoresSplitView(t *testing.T) {
+	oldRequest := model.Request{ID: "users.get", Name: "Old", Method: "GET", URL: "https://old"}
+	newRequest := model.Request{ID: "users.get", Name: "Updated", Method: "POST", URL: "https://new"}
+	m := NewModel(context.Background(), "/tmp/demo", "", &app.App{Workspace: &model.Workspace{Requests: []model.Request{oldRequest}}})
+	m.requestResult = &model.RequestResult{Request: oldRequest, Response: &model.Response{Status: "200 OK"}}
+	m.restoreSplitAfterEdit = true
+	loaded := &app.App{Workspace: &model.Workspace{Requests: []model.Request{newRequest}}}
+	_, _ = m.Update(reloadDoneMsg{app: loaded})
+	if !m.inSplitView() || m.requestResult.Request.Name != "Updated" || m.focusedPane != paneRequest {
+		t.Fatalf("split view was not restored after edit: overlay=%v request=%#v focus=%v", m.overlay, m.requestResult.Request, m.focusedPane)
 	}
 }
 
