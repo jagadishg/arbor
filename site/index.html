@@ -69,7 +69,7 @@
 
     <section id="quickstart">
       <h2>Quickstart</h2>
-      <p class="lede">Create a workspace, add a request, and run it — then open the TUI.</p>
+      <p class="lede">Create a workspace, add a request, and run it — then open the TUI or let a coding agent build the workspace from your API code.</p>
       <pre><code><span class="c"># install</span>
 brew install jagadishg/tap/arbor
 
@@ -78,10 +78,16 @@ arbor init myapi && cd myapi
 arbor new collection users -d "User endpoints"
 arbor new request users.get -m GET -u '{{base_url}}/users/1' -n "Get user"
 
+<span class="c"># definitions live in .arbor/ and are ready for Git</span>
+arbor validate
+
 <span class="c"># explore and run from the CLI</span>
 arbor list requests
 arbor describe users.get
 arbor run users.get
+
+<span class="c"># install the skill for coding agents</span>
+arbor skill install --agent all
 
 <span class="c"># or open the interactive terminal UI</span>
 arbor</code></pre>
