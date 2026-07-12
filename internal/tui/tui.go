@@ -76,6 +76,9 @@ type viewLocation struct {
 
 type requestDoneMsg model.RequestResult
 type requestTickMsg time.Time
+
+const requestRefreshInterval = 100 * time.Millisecond
+
 type scenarioDoneMsg model.ScenarioReport
 type reloadDoneMsg struct {
 	app     *app.App
@@ -190,7 +193,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case requestTickMsg:
 		if m.running {
 			m.spinner++
-			return m, tea.Tick(time.Second, func(t time.Time) tea.Msg { return requestTickMsg(t) })
+			return m, tea.Tick(requestRefreshInterval, func(t time.Time) tea.Msg { return requestTickMsg(t) })
 		}
 	case scenarioDoneMsg:
 		report := model.ScenarioReport(msg)
@@ -832,7 +835,7 @@ func (m *Model) runRequest(ref string) tea.Cmd {
 	m.overlay, m.focusedPane, m.requestOffset, m.responseOffset = responseOverlay, paneResponse, 0, 0
 	loaded, environment := m.app, m.environment
 	requestCmd := func() tea.Msg { return requestDoneMsg(loaded.RunRequest(ctx, ref, environment, nil)) }
-	return tea.Batch(requestCmd, tea.Tick(time.Second, func(t time.Time) tea.Msg { return requestTickMsg(t) }))
+	return tea.Batch(requestCmd, tea.Tick(requestRefreshInterval, func(t time.Time) tea.Msg { return requestTickMsg(t) }))
 }
 
 func (m *Model) cancelRunningRequest(closeView bool) {
@@ -1111,7 +1114,7 @@ func (m *Model) render() string {
 	if m.overlay != noOverlay {
 		var body string
 		if m.inSplitView() {
-			body = m.renderSplit(width, height-lipgloss.Height(header))
+			body = m.renderSplit(width, height-lipgloss.Height(header)-1)
 		} else {
 			body = m.renderOverlay(width, height-lipgloss.Height(header))
 		}

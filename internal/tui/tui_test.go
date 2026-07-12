@@ -320,6 +320,19 @@ func TestSplitPaneRowsKeepStableWidth(t *testing.T) {
 	}
 }
 
+func TestSplitViewFitsBelowHeader(t *testing.T) {
+	m := testModel()
+	m.width, m.height = 100, 24
+	m.requestResult = &model.RequestResult{
+		Request:  m.app.Workspace.Requests[0],
+		Response: &model.Response{Status: "200 OK", StatusCode: 200},
+	}
+	m.overlay, m.focusedPane = responseOverlay, paneResponse
+	if height := lipgloss.Height(m.render()); height > m.height {
+		t.Fatalf("split view exceeds terminal height: got %d, want <= %d", height, m.height)
+	}
+}
+
 func TestRunRequestOpensLiveSplitView(t *testing.T) {
 	ws := &model.Workspace{Name: "Demo", Root: "/tmp/demo", Requests: []model.Request{{ID: "users.get", Name: "Get", Method: "GET", URL: "https://x"}}}
 	m := NewModel(context.Background(), "/tmp/demo", "", &app.App{Workspace: ws})
