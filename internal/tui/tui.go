@@ -18,6 +18,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/jagadishg/arbor/internal/app"
 	"github.com/jagadishg/arbor/internal/buildinfo"
 	"github.com/jagadishg/arbor/internal/config"
@@ -1249,8 +1250,12 @@ func (m *Model) tableRow(index int, item item, width int) string {
 // blue border and receives scroll keys; the other is muted.
 func (m *Model) renderSplit(width, height int) string {
 	height = max(6, height)
-	leftOuter := max(24, width*42/100)
-	rightOuter := max(24, width-leftOuter)
+	leftOuter := width * 42 / 100
+	rightOuter := width - leftOuter
+	if width >= 48 {
+		leftOuter = max(24, leftOuter)
+		rightOuter = max(24, rightOuter)
+	}
 
 	reqLines := m.requestPaneLines(leftOuter - 3)
 	respLines := m.responsePaneLines(rightOuter - 3)
@@ -1283,7 +1288,9 @@ func clampOffset(offset, total, available int) int {
 // renderPane frames a list of (already-styled) content lines into a box of exactly
 // outerWidth columns and height rows, scrolled to offset.
 func (m *Model) renderPane(title string, lines []string, outerWidth, height, offset int, focused bool, footer string) []string {
+	outerWidth = max(4, outerWidth)
 	inner := outerWidth - 2
+	contentWidth := max(0, inner-1)
 	color := muted
 	if focused {
 		color = blue
@@ -1291,13 +1298,14 @@ func (m *Model) renderPane(title string, lines []string, outerWidth, height, off
 	border := lipgloss.NewStyle().Foreground(color)
 	titleText := "─ " + title + " "
 	if lipgloss.Width(titleText) > inner {
-		titleText = truncate(titleText, inner)
+		titleText = ansi.Truncate(titleText, inner, "…")
 	}
 	styledTitle := lipgloss.NewStyle().Foreground(blue).Bold(true).Render(titleText)
 	top := border.Render("┌") + styledTitle + border.Render(strings.Repeat("─", max(0, inner-lipgloss.Width(titleText)))+"┐")
 
 	frame := func(content string) string {
-		pad := max(0, inner-1-lipgloss.Width(content))
+		content = ansi.Truncate(content, contentWidth, "…")
+		pad := max(0, contentWidth-lipgloss.Width(content))
 		return border.Render("│") + " " + content + strings.Repeat(" ", pad) + border.Render("│")
 	}
 
@@ -1341,10 +1349,10 @@ func (m *Model) responsePaneLines(inner int) []string {
 	if m.running {
 		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 		frame := frames[m.spinner%len(frames)]
-		elapsed := time.Since(m.requestStarted).Round(time.Second)
+		elapsed := time.Since(m.requestStarted).Milliseconds()
 		return []string{
 			lipgloss.NewStyle().Foreground(blue).Bold(true).Render(frame + " Running request…"),
-			lipgloss.NewStyle().Foreground(muted).Render("Elapsed " + elapsed.String()),
+			lipgloss.NewStyle().Foreground(muted).Render(fmt.Sprintf("Elapsed %d ms", elapsed)),
 			"",
 			lipgloss.NewStyle().Foreground(muted).Render("Press q or esc to cancel and go back"),
 		}

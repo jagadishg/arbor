@@ -6,8 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/jagadishg/arbor/internal/app"
 	"github.com/jagadishg/arbor/internal/config"
 	"github.com/jagadishg/arbor/internal/model"
@@ -308,6 +310,16 @@ func TestSplitViewFocusAndScroll(t *testing.T) {
 	}
 }
 
+func TestSplitPaneRowsKeepStableWidth(t *testing.T) {
+	m := testModel()
+	rows := m.renderPane("Response", []string{"short", lipgloss.NewStyle().Bold(true).Render(strings.Repeat("x", 80))}, 32, 8, 0, true, strings.Repeat("hint ", 20))
+	for index, row := range rows {
+		if width := lipgloss.Width(row); width != 32 {
+			t.Fatalf("row %d has width %d, want 32: %q", index, width, row)
+		}
+	}
+}
+
 func TestRunRequestOpensLiveSplitView(t *testing.T) {
 	ws := &model.Workspace{Name: "Demo", Root: "/tmp/demo", Requests: []model.Request{{ID: "users.get", Name: "Get", Method: "GET", URL: "https://x"}}}
 	m := NewModel(context.Background(), "/tmp/demo", "", &app.App{Workspace: ws})
@@ -323,6 +335,17 @@ func TestRunRequestOpensLiveSplitView(t *testing.T) {
 	}
 	if lines := m.responsePaneLines(40); !strings.Contains(strings.Join(lines, "\n"), "Running request") {
 		t.Fatalf("running response pane missing status: %v", lines)
+	}
+}
+
+func TestRunningResponseShowsMilliseconds(t *testing.T) {
+	m := testModel()
+	m.running = true
+	m.requestStarted = time.Now().Add(-1234 * time.Millisecond)
+	m.requestResult = &model.RequestResult{Request: m.app.Workspace.Requests[0]}
+	content := strings.Join(m.responsePaneLines(40), "\n")
+	if !strings.Contains(content, "Elapsed ") || !strings.Contains(content, " ms") {
+		t.Fatalf("running response did not show milliseconds: %q", content)
 	}
 }
 
