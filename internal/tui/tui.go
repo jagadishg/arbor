@@ -461,6 +461,8 @@ func (m *Model) handleSplitKey(key string) (tea.Model, tea.Cmd) {
 		m.requestOffset = 0
 	case "x":
 		m.revealSecrets = !m.revealSecrets
+	case "c":
+		return m, m.copyFromFocusedPane()
 	case "r":
 		if !m.running {
 			return m, m.runRequest(m.requestResult.Request.Ref())
@@ -469,6 +471,31 @@ func (m *Model) handleSplitKey(key string) (tea.Model, tea.Cmd) {
 		m.mode, m.input, m.suggestion = commandMode, "", 0
 	}
 	return m, nil
+}
+
+// copyFromFocusedPane copies the response body (response pane) or the request as
+// a curl command (request pane) to the clipboard, respecting the reveal toggle
+// for secrets in the curl.
+func (m *Model) copyFromFocusedPane() tea.Cmd {
+	if m.focusedPane == paneRequest {
+		sent := m.requestResult.Sent
+		if sent == nil {
+			m.message = "Nothing to copy yet"
+			return nil
+		}
+		if m.revealSecrets {
+			m.message = "Request copied as curl (secrets revealed)"
+		} else {
+			m.message = "Request copied as curl (secrets redacted; press x to reveal)"
+		}
+		return tea.SetClipboard(curlCommand(sent, m.revealSecrets))
+	}
+	if m.requestResult.Response == nil {
+		m.message = "No response body to copy"
+		return nil
+	}
+	m.message = "Response body copied to clipboard"
+	return tea.SetClipboard(string(m.requestResult.Response.Body))
 }
 
 func (m *Model) editRequestInView() tea.Cmd {
@@ -1471,7 +1498,7 @@ func (m *Model) renderSplit(width, height int) string {
 	m.responseOffset = clampOffset(m.responseOffset, len(respLines), layout.available)
 
 	left := m.renderPane(m.requestPaneTitle(), reqLines, layout.leftOuter, layout.height, m.requestOffset, m.focusedPane == paneRequest, m.requestPaneFooter())
-	responseFooter := "[j/k] scroll  [g/G] top/end  [/] search  [n/N] match  [q] close"
+	responseFooter := "[j/k] scroll  [/] search  [c] copy body  [q] close"
 	if m.responseSearch != "" {
 		matches := m.responseSearchMatches(layout.responseWidth)
 		responseFooter += fmt.Sprintf("  /%s (%d)", m.responseSearch, len(matches))
@@ -1506,13 +1533,13 @@ func (m *Model) requestPaneTitle() string {
 
 func (m *Model) requestPaneFooter() string {
 	if m.requestShowDefinition || m.requestResult.Sent == nil {
-		return "[y] sent  [e] edit  [tab] focus"
+		return "[y] sent  [c] copy curl  [e] edit"
 	}
 	reveal := "[x] reveal"
 	if m.revealSecrets {
 		reveal = "[x] hide"
 	}
-	return "[y] definition  " + reveal + "  [e] edit"
+	return "[y] definition  " + reveal + "  [c] copy curl  [e] edit"
 }
 
 func clampOffset(offset, total, available int) int {
@@ -2141,7 +2168,7 @@ func (m *Model) responseContent(width int) string {
 
 func (m *Model) helpContent() string {
 	help := strings.Join([]string{
-		"Navigation", "  j/k, ↑/↓     move selection", "  g/G          first/last resource", "  Ctrl-f/b     page down/up", "  Enter        drill into a collection / switch workspace (or describe)", "  Esc, q, h, [ back through view history", "  ], →         forward through view history", "", "Resource actions", "  Enter, d     describe selected resource", "  y            show YAML", "  e            edit in $EDITOR", "  r            run selected request or scenario", "  l            show last response (like logs)", "  Ctrl-w       toggle wide table columns", "", "Views and commands", "  :            command prompt (top, k9s-style)", "  :ws          switch workspace (project); :ws <name> jumps directly", "  :use <env>   set the active environment (:ctx is a k9s-style alias)", "  :attach f=./x attach a multipart file to a request", "  :collections browse collections; :req :sc :env for the rest", "", "Response split view", "  Tab          switch focus between request and response", "  h/l, ←/→     focus request / response pane", "  j/k          scroll one line; Ctrl-f/b page; g/G top/end", "  H/M/L        visible top/middle/bottom", "  /            search response; Enter applies live query", "  n/N          next/previous response match", "  y            request pane: toggle sent / definition", "  x            request pane: reveal / hide secrets", "  e            edit the request", "  Ctrl-a       show resource aliases", "  Tab/Ctrl-f/→ accept command suggestion", "  ↑/↓          choose command suggestion", "  Ctrl-u       clear command; Ctrl-w removes its last word", "  Ctrl-r       reload workspace", "  ?            this help", "  Ctrl-c, :q   quit (or cancel a running request)",
+		"Navigation", "  j/k, ↑/↓     move selection", "  g/G          first/last resource", "  Ctrl-f/b     page down/up", "  Enter        drill into a collection / switch workspace (or describe)", "  Esc, q, h, [ back through view history", "  ], →         forward through view history", "", "Resource actions", "  Enter, d     describe selected resource", "  y            show YAML", "  e            edit in $EDITOR", "  r            run selected request or scenario", "  l            show last response (like logs)", "  Ctrl-w       toggle wide table columns", "", "Views and commands", "  :            command prompt (top, k9s-style)", "  :ws          switch workspace (project); :ws <name> jumps directly", "  :use <env>   set the active environment (:ctx is a k9s-style alias)", "  :attach f=./x attach a multipart file to a request", "  :collections browse collections; :req :sc :env for the rest", "", "Response split view", "  Tab          switch focus between request and response", "  h/l, ←/→     focus request / response pane", "  j/k          scroll one line; Ctrl-f/b page; g/G top/end", "  H/M/L        visible top/middle/bottom", "  /            search response; Enter applies live query", "  n/N          next/previous response match", "  y            request pane: toggle sent / definition", "  x            request pane: reveal / hide secrets", "  c            copy — response body (response pane) or curl (request pane)", "  e            edit the request", "  Ctrl-a       show resource aliases", "  Tab/Ctrl-f/→ accept command suggestion", "  ↑/↓          choose command suggestion", "  Ctrl-u       clear command; Ctrl-w removes its last word", "  Ctrl-r       reload workspace", "  ?            this help", "  Ctrl-c, :q   quit (or cancel a running request)",
 	}, "\n")
 	if len(m.hotkeys) == 0 {
 		return help
@@ -2184,7 +2211,7 @@ func (m *Model) contextualShortcuts() string {
 		return "[enter] execute  [tab] complete  [esc] cancel"
 	}
 	if m.inSplitView() {
-		return "[tab] pane  [j/k] scroll  [y] view  [x] reveal  [/] search  [q] close"
+		return "[tab] pane  [j/k] scroll  [y] view  [x] reveal  [c] copy  [q] close"
 	}
 	if m.overlay != noOverlay {
 		shortcuts := "[j/k] scroll  [g/G] top/end  [/] search  [n/N] match  [q] close"
@@ -2353,6 +2380,47 @@ func sanitizeText(value string) string {
 			return r
 		}
 	}, value)
+}
+
+// curlCommand renders the sent request as a runnable curl command. Secret values
+// are masked unless reveal is set, mirroring the request pane's [x] toggle.
+func curlCommand(sent *model.SentRequest, reveal bool) string {
+	show := func(text string) string {
+		if reveal {
+			return text
+		}
+		return sent.Redact(text)
+	}
+	parts := []string{"curl"}
+	if method := strings.ToUpper(sent.Method); method != "" && method != "GET" {
+		parts = append(parts, "-X", method)
+	}
+	parts = append(parts, shellQuote(show(sent.URL)))
+	for _, key := range sortedHeaderKeys(sent.Headers) {
+		// curl derives the multipart Content-Type (with its own boundary) from
+		// the -F flags, so emitting ours would send a mismatched boundary.
+		if sent.Multipart && strings.EqualFold(key, "Content-Type") {
+			continue
+		}
+		parts = append(parts, "-H", shellQuote(key+": "+show(strings.Join(sent.Headers[key], ", "))))
+	}
+	if sent.Multipart {
+		for _, key := range sortedKeys(sent.Form) {
+			parts = append(parts, "-F", shellQuote(key+"="+show(sent.Form[key])))
+		}
+		for _, field := range sortedKeys(sent.Files) {
+			parts = append(parts, "-F", shellQuote(field+"=@"+show(sent.Files[field])))
+		}
+	} else if strings.TrimSpace(sent.Body) != "" {
+		parts = append(parts, "--data", shellQuote(show(sent.Body)))
+	}
+	return strings.Join(parts, " ")
+}
+
+// shellQuote wraps a value in single quotes so it survives shell parsing intact,
+// escaping any embedded single quotes.
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 func truncate(value string, width int) string {
 	runes := []rune(value)

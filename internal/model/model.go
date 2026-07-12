@@ -119,11 +119,14 @@ type RequestResult struct {
 // definition. Secret values are stored unredacted; callers mask them with Redact
 // unless the user reveals them.
 type SentRequest struct {
-	Method  string
-	URL     string
-	Headers map[string][]string
-	Body    string
-	Secrets []string
+	Method    string
+	URL       string
+	Headers   map[string][]string
+	Body      string
+	Multipart bool
+	Form      map[string]string
+	Files     map[string]string
+	Secrets   []string
 }
 
 // Redact replaces known secret values in text with a masked placeholder.

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -356,6 +357,82 @@ func TestRequestPaneShowsSentAndTogglesRevealAndDefinition(t *testing.T) {
 	}
 	if def := pane(); !strings.Contains(def, "{{base_url}}/me") {
 		t.Fatalf("definition view missing placeholders:\n%s", def)
+	}
+}
+
+func TestCurlCommandRespectsRevealAndMultipart(t *testing.T) {
+	sent := &model.SentRequest{
+		Method:  "POST",
+		URL:     "https://api.example.com/users",
+		Headers: map[string][]string{"Authorization": {"Bearer s3cr3t"}, "Content-Type": {"application/json"}},
+		Body:    `{"name":"Ada"}`,
+		Secrets: []string{"s3cr3t"},
+	}
+	redacted := curlCommand(sent, false)
+	if strings.Contains(redacted, "s3cr3t") || !strings.Contains(redacted, "••••••") {
+		t.Fatalf("redacted curl leaked secret: %s", redacted)
+	}
+	if !strings.Contains(redacted, "-X POST") || !strings.Contains(redacted, "'https://api.example.com/users'") || !strings.Contains(redacted, "--data '{\"name\":\"Ada\"}'") {
+		t.Fatalf("curl missing expected parts: %s", redacted)
+	}
+	if !strings.Contains(curlCommand(sent, true), "Bearer s3cr3t") {
+		t.Fatalf("revealed curl should include secret: %s", curlCommand(sent, true))
+	}
+
+	multipart := &model.SentRequest{
+		Method:    "POST",
+		URL:       "https://api.example.com/upload",
+		Headers:   map[string][]string{"Content-Type": {"multipart/form-data; boundary=abc"}},
+		Multipart: true,
+		Form:      map[string]string{"caption": "hi there"},
+		Files:     map[string]string{"document": "./hello.txt"},
+	}
+	cmd := curlCommand(multipart, false)
+	if strings.Contains(cmd, "multipart/form-data") {
+		t.Fatalf("curl should let curl set its own multipart Content-Type: %s", cmd)
+	}
+	if !strings.Contains(cmd, "-F 'caption=hi there'") || !strings.Contains(cmd, "-F 'document=@./hello.txt'") {
+		t.Fatalf("multipart curl missing -F flags: %s", cmd)
+	}
+}
+
+func TestSplitViewCopyFollowsFocusedPane(t *testing.T) {
+	ws := &model.Workspace{Name: "Demo", Root: "/tmp/demo", Requests: []model.Request{{ID: "users.get", Name: "Get", Method: "GET", URL: "https://x/1"}}}
+	m := NewModel(context.Background(), "/tmp/demo", "", &app.App{Workspace: ws})
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	m.requestResult = &model.RequestResult{
+		Request:  ws.Requests[0],
+		Sent:     &model.SentRequest{Method: "GET", URL: "https://api.example.com/1", Headers: map[string][]string{"Authorization": {"Bearer s3cr3t"}}, Secrets: []string{"s3cr3t"}},
+		Response: &model.Response{Status: "200 OK", StatusCode: 200, Body: []byte(`{"id":1}`)},
+	}
+	m.overlay = responseOverlay
+
+	clip := func(cmd tea.Cmd) string {
+		if cmd == nil {
+			return ""
+		}
+		return fmt.Sprintf("%v", cmd())
+	}
+
+	// Response pane focused: c copies the raw response body.
+	m.focusedPane = paneResponse
+	if _, cmd := m.handleKey("c"); clip(cmd) != `{"id":1}` {
+		t.Fatalf("c on response pane did not copy body, got %q", clip(cmd))
+	}
+
+	// Request pane focused: c copies a redacted curl.
+	m.focusedPane = paneRequest
+	_, cmd := m.handleKey("c")
+	curl := clip(cmd)
+	if !strings.HasPrefix(curl, "curl ") || strings.Contains(curl, "s3cr3t") {
+		t.Fatalf("c on request pane did not copy redacted curl, got %q", curl)
+	}
+
+	// After revealing secrets, the curl includes real values.
+	_, _ = m.handleKey("x")
+	_, cmd = m.handleKey("c")
+	if !strings.Contains(clip(cmd), "Bearer s3cr3t") {
+		t.Fatalf("c after reveal should include secret, got %q", clip(cmd))
 	}
 }
 

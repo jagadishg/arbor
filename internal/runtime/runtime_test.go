@@ -163,4 +163,7 @@ func TestSnapshotRequestMultipartSummary(t *testing.T) {
 	if strings.Contains(sent.Body, "file body") {
 		t.Fatalf("multipart body should not include raw file contents: %q", sent.Body)
 	}
+	if !sent.Multipart || sent.Form["caption"] != "hello there" || sent.Files["document"] != "./hello.txt" {
+		t.Fatalf("multipart form/files not captured: %#v", sent)
+	}
 }

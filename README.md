@@ -64,6 +64,7 @@ Inside Arbor:
 - `r` runs the selected request or scenario; `l` shows its last response.
 - Running a request opens a **split view** — request on the left, response on the right (focused by default). `Tab` (or `h`/`l`) switches focus, `j`/`k` scroll the focused pane; the response shows a colored status line, timing, assertions, headers, and a syntax-highlighted body.
 - The request pane shows the **actual request that was sent** — resolved URL, headers, and body — with secrets redacted. `x` reveals or hides secrets, and `y` toggles between the sent request and the raw YAML definition (the edit target). `e` opens the definition in `$EDITOR`.
+- `c` copies to the clipboard, following the focused pane: the raw response body from the response pane, or the request as a runnable `curl` command from the request pane (secrets are redacted unless revealed with `x`).
 - `:` opens an alias-aware command prompt at the top of the screen with an autocomplete list; `Tab`, `Ctrl-f`, or `→` accepts a suggestion.
 - `Ctrl-a` lists resource aliases; `Esc` or `h` returns to the previous view.
 - `/` filters the current resource view incrementally; `?` shows help; `q` or `Esc` goes back; `Ctrl-c` quits.

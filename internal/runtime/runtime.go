@@ -96,6 +96,23 @@ func SnapshotRequest(definition model.Request, request *http.Request, vars *vari
 		sent.Headers[key] = copied
 	}
 	if strings.HasPrefix(request.Header.Get("Content-Type"), "multipart/form-data") {
+		sent.Multipart = true
+		sent.Form = map[string]string{}
+		sent.Files = map[string]string{}
+		for key, value := range definition.Form {
+			if resolved, err := vars.Resolve(value); err == nil {
+				sent.Form[key] = resolved
+			} else {
+				sent.Form[key] = value
+			}
+		}
+		for field, path := range definition.Files {
+			if resolved, err := vars.Resolve(path); err == nil {
+				sent.Files[field] = resolved
+			} else {
+				sent.Files[field] = path
+			}
+		}
 		sent.Body = multipartSummary(definition, vars)
 		return sent
 	}
