@@ -647,6 +647,15 @@ func (m *Model) executeCommand(command string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	verb := strings.ToLower(fields[0])
+	// Commands are global navigation actions. Leaving a split/overlay view here
+	// prevents the command from appearing to do nothing behind the current view.
+	// Attach is intentionally excluded because it targets the request in the
+	// split view while it is still active.
+	if verb != "attach" {
+		m.overlay, m.requestResult, m.scenarioReport = noOverlay, nil, nil
+		m.responseSearch, m.responseMatch = "", -1
+		m.overlaySearch, m.overlayMatch = "", -1
+	}
 	if (verb == "ws" || verb == "workspace" || verb == "workspaces") && len(fields) == 2 && !strings.HasPrefix(fields[1], "/") {
 		if entry, ok := m.findWorkspace(fields[1]); ok {
 			m.message = "Switching to " + entry.Name + "…"
@@ -1252,31 +1261,58 @@ func (m *Model) renderPrompt(width int) string {
 }
 
 func (m *Model) renderHeader(width int) string {
-	if width < 78 {
-		return lipgloss.NewStyle().Background(panel).Width(width).Render(" ARBOR  workspace: " + truncate(m.app.Workspace.Name, max(10, width-30)) + "  env: " + firstOr(m.environment, "none"))
+	return m.renderStructuredHeader(width)
+	if false {
+		if width < 78 {
+			return lipgloss.NewStyle().Background(panel).Width(width).Render(" ARBOR  workspace: " + truncate(m.app.Workspace.Name, max(10, width-30)) + "  env: " + firstOr(m.environment, "none"))
+		}
+
+		leftWidth := max(34, width-34)
+
+		rows := []string{
+			"ARBOR Workspace: " + m.app.Workspace.Name,
+			"Root:      " + m.app.Workspace.Root,
+			"Environment: " + firstOr(m.environment, "none"),
+			fmt.Sprintf("Resources: %d requests · %d scenarios · %d environments", len(m.app.Workspace.Requests), len(m.app.Workspace.Scenarios), len(m.app.Workspace.Environments)),
+			"Arbor Rev: " + buildinfo.Version,
+		}
+
+		logo := []string{
+			"    _    ____  ____   ___  ____",
+			"   / \\  |  _ \\| __ ) / _ \\|  _ \\",
+			"  / _ \\ | |_) |  _ \\| | | | |_) |",
+			" / ___ \\|  _ <| |_) | |_| |  _ <",
+			"/_/   \\_\\_| \\_\\____/ \\___/|_| \\_\\",
+		}
+
+		lines := make([]string, 0, len(rows))
+
+		for index, row := range rows {
+			left := lipgloss.NewStyle().Foreground(yellow).Render(truncate(row, leftWidth))
+			right := lipgloss.NewStyle().Foreground(green).Bold(true).Render(logo[index])
+			lines = append(lines, left+strings.Repeat(" ", max(1, width-lipgloss.Width(left)-lipgloss.Width(right)))+right)
+		}
+
+		return lipgloss.NewStyle().Background(panel).Width(width).Render(strings.Join(lines, "\n"))
 	}
-	leftWidth := max(34, width-34)
-	rows := []string{
-		"ARBOR Workspace: " + m.app.Workspace.Name,
-		"Root:      " + m.app.Workspace.Root,
-		"Environment: " + firstOr(m.environment, "none"),
-		fmt.Sprintf("Resources: %d requests · %d scenarios · %d environments", len(m.app.Workspace.Requests), len(m.app.Workspace.Scenarios), len(m.app.Workspace.Environments)),
-		"Arbor Rev: " + buildinfo.Version,
+	return ""
+}
+
+func (m *Model) renderStructuredHeader(width int) string {
+	label := lipgloss.NewStyle().Foreground(muted).Bold(true)
+	brand := lipgloss.NewStyle().Foreground(blue).Bold(true)
+	value := lipgloss.NewStyle().Foreground(foreground)
+	accent := lipgloss.NewStyle().Foreground(green).Bold(true)
+	workspace := truncate(m.app.Workspace.Name, max(10, width/4))
+	environment := firstOr(m.environment, "none")
+	resources := fmt.Sprintf("%d requests · %d scenarios · %d environments", len(m.app.Workspace.Requests), len(m.app.Workspace.Scenarios), len(m.app.Workspace.Environments))
+	line1 := " " + brand.Render("ARBOR") + "  " + label.Render("Workspace:") + " " + value.Render(workspace) + "  " + label.Render("Environment:") + " " + accent.Render(environment)
+	line2 := " " + label.Render("View:") + " " + accent.Render(m.section.String())
+	if m.scope != "" {
+		line2 += " " + label.Render("Scope:") + " " + value.Render(m.scope)
 	}
-	logo := []string{
-		"    _    ____  ____   ___  ____",
-		"   / \\  |  _ \\| __ ) / _ \\|  _ \\",
-		"  / _ \\ | |_) |  _ \\| | | | |_) |",
-		" / ___ \\|  _ <| |_) | |_| |  _ <",
-		"/_/   \\_\\_| \\_\\____/ \\___/|_| \\_\\",
-	}
-	lines := make([]string, 0, len(rows))
-	for index, row := range rows {
-		left := lipgloss.NewStyle().Foreground(yellow).Render(truncate(row, leftWidth))
-		right := lipgloss.NewStyle().Foreground(green).Bold(true).Render(logo[index])
-		lines = append(lines, left+strings.Repeat(" ", max(1, width-lipgloss.Width(left)-lipgloss.Width(right)))+right)
-	}
-	return lipgloss.NewStyle().Background(panel).Width(width).Render(strings.Join(lines, "\n"))
+	line2 += "  " + label.Render("Resources:") + " " + value.Render(resources) + "  " + label.Render("Rev:") + " " + value.Render(buildinfo.Version)
+	return lipgloss.NewStyle().Background(panel).Width(width).Render(line1 + "\n" + line2)
 }
 
 func (m *Model) renderTable(width, height int) string {
@@ -2028,15 +2064,40 @@ func (m *Model) renderFooter(width int) string {
 	if m.running {
 		message = "● " + message
 	}
-	shortcuts := "[d] describe  [y] yaml  [r] run  [/] filter  [:] command  [ctrl-a] aliases  [?] help"
-	if width < 105 {
-		shortcuts = "[d] describe  [r] run  [/] filter  [:] command  [?] help"
-	}
+	shortcuts := m.contextualShortcuts()
 	if width < 90 {
-		shortcuts = "[d]  [r]  [/]  [:]  [?]"
+		shortcuts = "[j/k] move  [enter] open  [:] command  [?] help"
 	}
 	message = truncate(message, max(1, width-lipgloss.Width(shortcuts)-3))
 	return tabs + "\n" + lipgloss.NewStyle().Foreground(muted).Width(width).Render(" 😎 "+message+strings.Repeat(" ", max(1, width-lipgloss.Width(message)-lipgloss.Width(shortcuts)-4))+shortcuts)
+}
+
+func (m *Model) contextualShortcuts() string {
+	if m.mode == commandMode {
+		return "[enter] execute  [tab] complete  [esc] cancel"
+	}
+	if m.inSplitView() {
+		return "[tab] pane  [j/k] scroll  [g/G] top/end  [/] search  [n/N] match  [q] close"
+	}
+	if m.overlay != noOverlay {
+		shortcuts := "[j/k] scroll  [g/G] top/end  [/] search  [n/N] match  [q] close"
+		if m.overlay == yamlOverlay || m.overlay == describeOverlay {
+			shortcuts += "  [e] edit  [r] run"
+		}
+		return shortcuts
+	}
+	switch m.section {
+	case requestsSection:
+		return "[j/k] move  [enter] describe  [e] edit  [r] run  [/] filter  [:] command"
+	case collectionsSection:
+		return "[j/k] move  [enter] open  [d] describe  [r] run  [:] command"
+	case scenariosSection:
+		return "[j/k] move  [enter] describe  [e] edit  [r] run  [:] command"
+	case environmentsSection:
+		return "[j/k] move  [enter] describe  [e] edit  [r] select  [:] command"
+	default:
+		return "[j/k] move  [enter] open  [:] command  [?] help"
+	}
 }
 
 func (m *Model) renderTabs(width int) string {

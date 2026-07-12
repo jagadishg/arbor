@@ -98,7 +98,7 @@ func TestViewUsesResourceTableAndK9sHints(t *testing.T) {
 	m := testModel()
 	_, _ = m.Update(tea.WindowSizeMsg{Width: 110, Height: 32})
 	view := m.View().Content
-	for _, expected := range []string{"ARBOR Workspace: Demo", "requests(all)[2]", "NAME", "METHOD", "[ctrl-a] aliases"} {
+	for _, expected := range []string{"ARBOR", "Workspace:", "requests(all)[2]", "NAME", "METHOD", "[j/k] move"} {
 		if !strings.Contains(view, expected) {
 			t.Errorf("view missing %q", expected)
 		}
@@ -422,6 +422,11 @@ func TestCommandBarOpensFromSplitView(t *testing.T) {
 	}
 	if !strings.Contains(ansi.Strip(m.render()), "▊") {
 		t.Fatal("command prompt was not rendered above split view")
+	}
+	m.input = "collections"
+	_, _ = m.handleKey("enter")
+	if m.mode != normalMode || m.overlay != noOverlay || m.section != collectionsSection {
+		t.Fatalf("split command did not navigate: mode=%v overlay=%v section=%v", m.mode, m.overlay, m.section)
 	}
 }
 
