@@ -1317,11 +1317,12 @@ func (m *Model) renderStructuredHeader(width int) string {
 		`/_/   \_\_| \_\____/ \___/|_| \_\`,
 	}
 	logoWidth := 34
-	rightWidth := max(30, width/3)
-	centerWidth := max(24, width-logoWidth-rightWidth-2)
-	shortcuts := strings.Split(wrap(m.contextualShortcuts(), max(10, rightWidth-2)), "\n")
+	leftWidth := width - logoWidth - 2
+	shortcutWidth := max(28, leftWidth/3)
+	infoWidth := max(24, leftWidth-shortcutWidth-1)
+	shortcuts := strings.Split(wrap(m.contextualShortcuts(), max(10, shortcutWidth)), "\n")
 	shortcutLines := append([]string{"SHORTCUTS"}, shortcuts...)
-	workspace := truncate(m.app.Workspace.Name, max(10, centerWidth-14))
+	workspace := truncate(m.app.Workspace.Name, max(10, infoWidth-14))
 	environment := firstOr(m.environment, "none")
 	resources := fmt.Sprintf("%d requests · %d scenarios · %d environments", len(m.app.Workspace.Requests), len(m.app.Workspace.Scenarios), len(m.app.Workspace.Environments))
 	info := []string{
@@ -1338,16 +1339,16 @@ func (m *Model) renderStructuredHeader(width int) string {
 		if index == 0 {
 			infoStyle = label
 		}
-		infoCell := infoStyle.Render(truncate(info[index], centerWidth))
+		infoCell := infoStyle.Render(truncate(info[index], infoWidth))
 		shortcutCell := ""
 		if index < len(shortcutLines) {
 			shortcutStyle := value
 			if index == 0 {
 				shortcutStyle = label
 			}
-			shortcutCell = shortcutStyle.Render(truncate(shortcutLines[index], rightWidth-2))
+			shortcutCell = shortcutStyle.Render(truncate(shortcutLines[index], shortcutWidth))
 		}
-		rows = append(rows, fitHeaderCell(logoCell, logoWidth)+"│"+fitHeaderCell(infoCell, centerWidth)+"│"+fitHeaderCell(shortcutCell, rightWidth))
+		rows = append(rows, fitHeaderCell(infoCell, infoWidth)+" "+fitHeaderCell(shortcutCell, shortcutWidth)+" "+fitHeaderCell(logoCell, logoWidth))
 	}
 	return lipgloss.NewStyle().Background(panel).Width(width).Render(strings.Join(rows, "\n"))
 }

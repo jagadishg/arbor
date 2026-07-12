@@ -276,7 +276,7 @@ func TestHeaderUsesEnvironmentLabel(t *testing.T) {
 		t.Fatalf("header missing Environment label: %q", view)
 	}
 	header := ansi.Strip(m.renderHeader(110))
-	if !strings.Contains(header, "SHORTCUTS") || !strings.Contains(header, "____") {
+	if !strings.Contains(header, "SHORTCUTS") || !strings.Contains(header, "____") || strings.Contains(header, "│") {
 		t.Fatalf("header missing shortcut panel or ASCII logo: %q", header)
 	}
 }
