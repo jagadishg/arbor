@@ -1,5 +1,5 @@
 {"version":2,"width":110,"height":30,"timestamp":1783847121,"command":"bash /Users/jagadishg/Documents/workspace/oss/arbor/demo/cli.sh","env":{"SHELL":"/bin/zsh"}}
-[0.915392, "o", "\u001b[38;5;44mArbor — a terminal-native, local-first API workspace\u001b[0m\r\n\r\n"]
+[0.915392, "o", "\u001b[38;5;44mArbor — the API client that lives in your terminal\u001b[0m\r\n\r\n"]
 [1.730801, "o", "\r\n\u001b[38;5;245m# Create a new workspace\u001b[0m\r\n"]
 [2.348232, "o", "\u001b[38;5;213m❯\u001b[0m a"]
 [2.382284, "o", "r"]

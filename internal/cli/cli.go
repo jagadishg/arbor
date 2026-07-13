@@ -56,7 +56,7 @@ func New(options Options) *cobra.Command {
 	var workspaceName string
 	options.Resolve = func() (string, error) { return resolveDir(options, workspaceName) }
 	root := &cobra.Command{
-		Use: "arbor", Short: "A terminal-native, local-first API workspace",
+		Use: "arbor", Short: "The API client that lives in your terminal",
 		SilenceUsage: true, SilenceErrors: true,
 		Version: fmt.Sprintf("%s (%s, %s)", buildinfo.Version, buildinfo.Commit, buildinfo.Date),
 		RunE: func(cmd *cobra.Command, _ []string) error {

@@ -11,7 +11,7 @@ trap 'rm -rf "$WORK"' EXIT
 cd "$WORK"
 
 sleep 0.8
-title 'Arbor — a terminal-native, local-first API workspace'
+title 'Arbor — the API client that lives in your terminal'
 
 comment 'Create a new workspace'
 type_run 'arbor init myapi'

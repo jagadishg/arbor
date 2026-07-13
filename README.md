@@ -1,8 +1,8 @@
 # Arbor
 
-**A terminal-native, local-first API workspace.**
+**The API client that lives in your terminal.**
 
-Arbor brings the speed and familiarity of k9s to API development. Browse collections, switch environments, run requests, inspect responses, and execute test scenarios without leaving the terminal. Every workspace is made of readable YAML files that belong in Git.
+Arbor brings familiar API request and testing workflows to a keyboard-first terminal UI, with k9s-style navigation and readable YAML files that belong in Git. Define requests, environments, and scenarios once, then run the same definitions from the TUI, CLI, or CI.
 
 **[▶ See the live demo and docs →](https://jagadishg.github.io/arbor/)**
 
