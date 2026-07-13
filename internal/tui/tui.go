@@ -33,12 +33,13 @@ const (
 	requestsSection section = iota
 	collectionsSection
 	scenariosSection
+	variablesSection
 	environmentsSection
 	workspacesSection
 )
 
 func (s section) String() string {
-	return []string{"requests", "collections", "scenarios", "environments", "workspaces"}[s]
+	return []string{"requests", "collections", "scenarios", "variables", "environments", "workspaces"}[s]
 }
 
 type inputMode int
@@ -950,6 +951,8 @@ func sectionFor(target string) section {
 		return collectionsSection
 	case "scenarios":
 		return scenariosSection
+	case "variables":
+		return variablesSection
 	case "environments":
 		return environmentsSection
 	case "workspaces":
@@ -1152,6 +1155,8 @@ func (m *Model) selectedPath() string {
 		return value.Path
 	case model.Environment:
 		return value.Path
+	case workspaceVariable:
+		return m.app.Workspace.Path
 	case config.Entry:
 		return filepath.Join(value.Path, "arbor.yaml")
 	}
@@ -1175,6 +1180,11 @@ func (m *Model) hasResultForSelected() bool {
 type item struct {
 	label string
 	value any
+}
+
+type workspaceVariable struct {
+	Name  string
+	Value string
 }
 
 func (m *Model) items() []item {
@@ -1207,6 +1217,10 @@ func (m *Model) items() []item {
 		for _, scenario := range scenarios {
 			values = append(values, item{scenario.Ref(), scenario})
 		}
+	case variablesSection:
+		for _, name := range sortedKeys(m.app.Workspace.Variables) {
+			values = append(values, item{name, workspaceVariable{Name: name, Value: m.app.Workspace.Variables[name]}})
+		}
 	case environmentsSection:
 		environments := append([]model.Environment(nil), m.app.Workspace.Environments...)
 		sort.Slice(environments, func(i, j int) bool { return environments[i].Name < environments[j].Name })
@@ -1238,6 +1252,8 @@ func (m *Model) itemSearchText(item item) string {
 		return value.Name + " " + value.Description
 	case model.Scenario:
 		return value.Ref() + " " + value.Name
+	case workspaceVariable:
+		return value.Name + " " + value.Value
 	case model.Environment:
 		return value.Name
 	case config.Entry:
@@ -1290,7 +1306,7 @@ func (m *Model) suggestions() []suggestion {
 				values = append(values, suggestion{alias, target + " view"})
 			}
 		}
-		for _, command := range []suggestion{{"requests", "browse requests"}, {"collections", "browse collections"}, {"scenarios", "browse scenarios"}, {"environments", "browse environments"}, {"workspaces", "switch workspace"}, {"attach", "attach a file to a request"}, {"aliases", "show resource aliases"}, {"help", "show keyboard shortcuts"}, {"reload", "reload workspace files"}, {"use", "switch environment"}, {"ctx", "switch environment"}, {"run", "run a request or scenario"}, {"quit", "quit Arbor"}} {
+		for _, command := range []suggestion{{"requests", "browse requests"}, {"collections", "browse collections"}, {"scenarios", "browse scenarios"}, {"variables", "browse workspace variables"}, {"environments", "browse environments"}, {"workspaces", "switch workspace"}, {"attach", "attach a file to a request"}, {"aliases", "show resource aliases"}, {"help", "show keyboard shortcuts"}, {"reload", "reload workspace files"}, {"use", "switch environment"}, {"ctx", "switch environment"}, {"run", "run a request or scenario"}, {"quit", "quit Arbor"}} {
 			if strings.HasPrefix(command.value, input) {
 				values = append(values, command)
 			}
@@ -1422,7 +1438,7 @@ func (m *Model) renderHeader(width int) string {
 	shortcutLines := shortcuts
 	workspace := truncate(m.app.Workspace.Name, max(10, infoWidth-14))
 	environment := firstOr(m.environment, "none")
-	resources := fmt.Sprintf("%d requests · %d scenarios · %d environments", len(m.app.Workspace.Requests), len(m.app.Workspace.Scenarios), len(m.app.Workspace.Environments))
+	resources := fmt.Sprintf("%d requests · %d scenarios · %d variables · %d environments", len(m.app.Workspace.Requests), len(m.app.Workspace.Scenarios), len(m.app.Workspace.Variables), len(m.app.Workspace.Environments))
 	info := []string{
 		label.Render("Workspace:") + " " + value.Render(workspace),
 		label.Render("Environment:") + " " + accent.Render(environment),
@@ -1538,6 +1554,9 @@ func (m *Model) tableHeader(width int) string {
 	case scenariosSection:
 		nameWidth := max(18, width-24)
 		return style.Render(fmt.Sprintf("  %-*s %-8s %s", nameWidth, "NAME", "STEPS", "ON FAILURE"))
+	case variablesSection:
+		nameWidth := min(28, max(16, width/3))
+		return style.Render(fmt.Sprintf("  %-*s %s", nameWidth, "NAME", "VALUE"))
 	case workspacesSection:
 		nameWidth := min(28, max(16, width/3))
 		return style.Render(fmt.Sprintf("  %-*s %s", nameWidth, "NAME", "PATH"))
@@ -1572,6 +1591,10 @@ func (m *Model) tableRow(index int, item item, width int) string {
 		}
 		nameWidth := max(18, width-24)
 		return style.Render(fmt.Sprintf("%s%-*s %-8d %s", prefix, nameWidth, truncate(value.Ref(), nameWidth), len(value.Steps), mode))
+	case workspaceVariable:
+		nameWidth := min(28, max(16, width/3))
+		valueWidth := max(10, width-nameWidth-3)
+		return style.Render(fmt.Sprintf("%s%-*s %s", prefix, nameWidth, truncate(value.Name, nameWidth), truncate(value.Value, valueWidth)))
 	case model.Environment:
 		active := ""
 		if value.Name == m.environment {
@@ -2244,6 +2267,15 @@ func (m *Model) describeSelected() string {
 			}
 		}
 		return strings.Join(lines, "\n")
+	case workspaceVariable:
+		return strings.Join([]string{
+			"Name: " + value.Name,
+			"Value: " + value.Value,
+			"Scope: workspace",
+			"File: " + relative(m.app.Workspace.Root, m.app.Workspace.Path),
+			"",
+			"Workspace variables are shared across environments.",
+		}, "\n")
 	case config.Entry:
 		lines := []string{"Workspace: " + value.Name, "Path: " + value.Path}
 		if value.Path == m.app.Workspace.Root {
@@ -2322,7 +2354,7 @@ func (m *Model) responseContent(width int) string {
 
 func (m *Model) helpContent() string {
 	help := strings.Join([]string{
-		"Navigation", "  j/k, ↑/↓     move selection", "  g/G          first/last resource", "  Ctrl-f/b     page down/up", "  Enter        drill into a collection / switch workspace (or describe)", "  Esc, q, h, [ back through view history", "  ], →         forward through view history", "", "Resource actions", "  Enter, d     describe selected resource", "  y            show YAML", "  e            edit in $EDITOR", "  r            run selected request or scenario", "  l            show last response (like logs)", "  Ctrl-w       toggle wide table columns", "", "Views and commands", "  :            command prompt (top, k9s-style)", "  :ws          switch workspace (project); :ws <name> jumps directly", "  :use <env>   set the active environment (:ctx is a k9s-style alias)", "  :attach f=./x attach a multipart file to a request", "  :collections browse collections; :req :sc :env for the rest", "", "Response split view", "  Tab          switch focus between request and response", "  h/l, ←/→     focus request / response pane", "  j/k          scroll one line; Ctrl-f/b page; g/G top/end", "  H/M/L        visible top/middle/bottom", "  /            search response; Enter applies live query", "  n/N          next/previous response match", "  y            request pane: toggle sent / definition", "  x            request pane: reveal / hide secrets", "  c            copy — response body (response pane) or curl (request pane)", "  e            edit the request", "  Ctrl-a       show resource aliases", "  Tab/Ctrl-f/→ accept command suggestion", "  ↑/↓          choose command suggestion", "  Ctrl-u       clear command; Ctrl-w removes its last word", "  Ctrl-r       reload workspace", "  ?            this help", "  Ctrl-c, :q   quit (or cancel a running request)",
+		"Navigation", "  j/k, ↑/↓     move selection", "  g/G          first/last resource", "  Ctrl-f/b     page down/up", "  Enter        drill into a collection / switch workspace (or describe)", "  Esc, q, h, [ back through view history", "  ], →         forward through view history", "", "Resource actions", "  Enter, d     describe selected resource", "  y            show YAML", "  e            edit in $EDITOR", "  r            run selected request or scenario", "  l            show last response (like logs)", "  Ctrl-w       toggle wide table columns", "", "Views and commands", "  :            command prompt (top, k9s-style)", "  :ws          switch workspace (project); :ws <name> jumps directly", "  :vars        browse workspace variables", "  :use <env>   set the active environment (:ctx is a k9s-style alias)", "  :attach f=./x attach a multipart file to a request", "  :collections browse collections; :req :sc :vars :env for the rest", "", "Response split view", "  Tab          switch focus between request and response", "  h/l, ←/→     focus request / response pane", "  j/k          scroll one line; Ctrl-f/b page; g/G top/end", "  H/M/L        visible top/middle/bottom", "  /            search response; Enter applies live query", "  n/N          next/previous response match", "  y            request pane: toggle sent / definition", "  x            request pane: reveal / hide secrets", "  c            copy — response body (response pane) or curl (request pane)", "  e            edit the request", "  Ctrl-a       show resource aliases", "  Tab/Ctrl-f/→ accept command suggestion", "  ↑/↓          choose command suggestion", "  Ctrl-u       clear command; Ctrl-w removes its last word", "  Ctrl-r       reload workspace", "  ?            this help", "  Ctrl-c, :q   quit (or cancel a running request)",
 	}, "\n")
 	help = strings.ReplaceAll(help, "  h/l, ←/→     focus request / response pane", "  h/l          focus request / response pane")
 	help = strings.ReplaceAll(help, "  j/k          scroll one line; Ctrl-f/b page; g/G top/end", "  ←/→          scroll horizontally\n  j/k          scroll one line; Ctrl-f/b page; g/G top/end")
@@ -2384,6 +2416,8 @@ func (m *Model) contextualShortcuts() string {
 		return "[j/k] move  [enter] open  [d] describe  [r] run  [:] command"
 	case scenariosSection:
 		return "[j/k] move  [enter] describe  [e] edit  [r] run  [:] command"
+	case variablesSection:
+		return "[j/k] move  [enter] describe  [e] edit arbor.yaml  [/] filter  [:] command"
 	case environmentsSection:
 		return "[j/k] move  [enter] describe  [e] edit  [r] select  [:] command"
 	default:
@@ -2393,7 +2427,7 @@ func (m *Model) contextualShortcuts() string {
 
 func (m *Model) renderTabs(width int) string {
 	parts := []string{}
-	for _, view := range []section{requestsSection, collectionsSection, scenariosSection, environmentsSection} {
+	for _, view := range []section{requestsSection, collectionsSection, scenariosSection, variablesSection, environmentsSection} {
 		label := " <" + view.String() + "> "
 		style := lipgloss.NewStyle().Foreground(muted)
 		if view == m.section {
@@ -2631,7 +2665,7 @@ func firstOr(value, fallback string) string {
 }
 
 func loadAliases(root string) (map[string]string, error) {
-	aliases := map[string]string{"requests": "requests", "request": "requests", "req": "requests", "r": "requests", "apis": "requests", "collections": "collections", "collection": "collections", "col": "collections", "cols": "collections", "scenarios": "scenarios", "scenario": "scenarios", "sc": "scenarios", "environments": "environments", "environment": "environments", "env": "environments", "envs": "environments", "contexts": "environments", "workspaces": "workspaces", "workspace": "workspaces", "ws": "workspaces"}
+	aliases := map[string]string{"requests": "requests", "request": "requests", "req": "requests", "r": "requests", "apis": "requests", "collections": "collections", "collection": "collections", "col": "collections", "cols": "collections", "scenarios": "scenarios", "scenario": "scenarios", "sc": "scenarios", "variables": "variables", "variable": "variables", "vars": "variables", "workspace-vars": "variables", "environments": "environments", "environment": "environments", "env": "environments", "envs": "environments", "contexts": "environments", "workspaces": "workspaces", "workspace": "workspaces", "ws": "workspaces"}
 	for _, path := range interactionPaths(root, "aliases.yaml") {
 		data, err := os.ReadFile(path)
 		if os.IsNotExist(err) {
@@ -2648,7 +2682,7 @@ func loadAliases(root string) (map[string]string, error) {
 		}
 		for alias, target := range config.Aliases {
 			target = strings.ToLower(strings.TrimSpace(target))
-			if target != "requests" && target != "collections" && target != "scenarios" && target != "environments" && target != "workspaces" {
+			if target != "requests" && target != "collections" && target != "scenarios" && target != "variables" && target != "environments" && target != "workspaces" {
 				return nil, fmt.Errorf("alias %q targets unknown view %q", alias, target)
 			}
 			aliases[strings.ToLower(alias)] = target

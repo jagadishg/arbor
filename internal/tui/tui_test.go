@@ -65,6 +65,32 @@ func TestResourceCommandCanSetFilterAndContextView(t *testing.T) {
 	}
 }
 
+func TestWorkspaceVariablesViewAndEditorTarget(t *testing.T) {
+	ws := &model.Workspace{
+		Name:      "Demo",
+		Root:      "/tmp/demo",
+		Path:      "/tmp/demo/.arbor/arbor.yaml",
+		Variables: map[string]string{"base_url": "https://api.example.com", "api_version": "v1"},
+	}
+	m := NewModel(context.Background(), "/tmp/demo", "", &app.App{Workspace: ws})
+	m.mode, m.input = commandMode, "vars"
+	_, _ = m.handleKey("enter")
+	if m.section != variablesSection || len(m.items()) != 2 {
+		t.Fatalf("variables view = %s with %d items", m.section, len(m.items()))
+	}
+	if !strings.Contains(m.tableHeader(80), "VALUE") || !strings.Contains(m.tableRow(0, m.items()[0], 80), "api_version") {
+		t.Fatal("workspace variables table did not render the sorted variable rows")
+	}
+	_, _ = m.handleKey("d")
+	if m.overlay != describeOverlay || !strings.Contains(m.describeSelected(), "Scope: workspace") {
+		t.Fatal("workspace variable description did not show its scope")
+	}
+	m.overlay = noOverlay
+	if path := m.selectedPath(); path != ws.Path {
+		t.Fatalf("workspace variable editor path = %q, want %q", path, ws.Path)
+	}
+}
+
 func TestCommandCompletion(t *testing.T) {
 	m := testModel()
 	m.mode, m.input = commandMode, "req"

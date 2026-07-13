@@ -116,6 +116,10 @@ http:
   timeout: 30s
 ```
 
+Workspace-level `variables` are shared across every environment. In the TUI, use `:vars` (also
+`:variables` or `:variable`) to browse them, filter the list, describe a variable's workspace
+scope, or press `e` to edit the authoritative `arbor.yaml` file.
+
 A request is a versioned YAML file anywhere under `.arbor/collections/`:
 
 ```yaml
@@ -334,6 +338,8 @@ Use `--json` with `arbor run` for machine-readable output.
 :collections, :col        Open collections (Enter drills into a collection)
 :scenarios, :scenario, :sc
                           Open scenarios
+:variables, :variable, :vars
+                          Open shared workspace variables
 :environments, :env       Open environments
 :workspaces, :ws          Switch workspace (Enter switches to the selected project)
 :ws twilio-apis           Switch workspace directly
@@ -352,7 +358,7 @@ Arbor also reloads the workspace after returning from `$EDITOR`. Use `Ctrl-r` af
 
 ### Workspace-local aliases
 
-Arbor includes built-in aliases such as `:req`, `:sc`, and `:env`. Add project-specific aliases in `.arbor/aliases.yaml`; they are loaded when Arbor starts and on `Ctrl-r`:
+Arbor includes built-in aliases such as `:req`, `:sc`, `:vars`, and `:env`. Add project-specific aliases in `.arbor/aliases.yaml`; they are loaded when Arbor starts and on `Ctrl-r`:
 
 ```yaml
 aliases:
