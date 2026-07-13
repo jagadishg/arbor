@@ -20,6 +20,7 @@ import (
 	"github.com/jagadishg/arbor/internal/schema"
 	"github.com/jagadishg/arbor/internal/secrets"
 	arborskill "github.com/jagadishg/arbor/internal/skill"
+	"github.com/jagadishg/arbor/internal/updatecheck"
 	"github.com/jagadishg/arbor/internal/variables"
 	"github.com/jagadishg/arbor/internal/workspace"
 	"github.com/spf13/cobra"
@@ -28,12 +29,14 @@ import (
 )
 
 type Options struct {
-	Out     io.Writer
-	ErrOut  io.Writer
-	In      io.Reader
-	Dir     string
-	RunTUI  func(context.Context, string, string) error
-	Resolve func() (string, error)
+	Out         io.Writer
+	ErrOut      io.Writer
+	In          io.Reader
+	Dir         string
+	RunTUI      func(context.Context, string, string) error
+	Resolve     func() (string, error)
+	UpdateCheck bool
+	UpdateURL   string
 }
 
 func New(options Options) *cobra.Command {
@@ -63,6 +66,11 @@ func New(options Options) *cobra.Command {
 			dir, err := resolveTUITarget(options, workspaceName)
 			if err != nil {
 				return err
+			}
+			if options.UpdateCheck {
+				if message := updatecheck.Check(cmd.Context(), buildinfo.Version, options.UpdateURL); message != "" {
+					fmt.Fprintln(options.ErrOut, message)
+				}
 			}
 			rememberWorkspace(dir)
 			return options.RunTUI(cmd.Context(), dir, environment)

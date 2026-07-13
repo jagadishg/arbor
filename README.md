@@ -40,6 +40,11 @@ Or install with Go:
 go install github.com/jagadishg/arbor/cmd/arbor@latest
 ```
 
+When Arbor starts interactively, it checks GitHub for a newer stable release at
+most once per day and prints upgrade instructions when one is available. The
+check is best-effort and never runs for commands such as `arbor validate` or in
+CI. Set `ARBOR_NO_UPDATE_CHECK=1` to disable it.
+
 Tagged releases also provide standalone archives for macOS, Linux, and Windows on the [GitHub releases page](https://github.com/jagadishg/arbor/releases).
 
 Arbor requires a terminal with UTF-8 and ANSI color support. Windows Terminal is recommended on Windows.
