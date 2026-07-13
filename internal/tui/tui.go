@@ -129,6 +129,7 @@ type workspaceSwitchedMsg struct {
 	aliases    map[string]string
 	hotkeys    map[string]hotkey
 	workspaces []config.Entry
+	drillDown  bool
 	err        error
 }
 
@@ -298,7 +299,12 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.aliases, m.hotkeys, m.workspaces = msg.aliases, msg.hotkeys, msg.workspaces
 			m.environment = m.app.Workspace.DefaultEnv
 			m.section, m.scope, m.filter, m.selected = collectionsSection, "", "", 0
-			m.history, m.forward = nil, nil
+			if msg.drillDown {
+				m.history = append(m.history, viewLocation{section: workspacesSection})
+				m.forward = nil
+			} else {
+				m.history, m.forward = nil, nil
+			}
 			m.overlay, m.overlayOffset, m.requestResult, m.scenarioReport = noOverlay, 0, nil, nil
 			m.message = "Switched to " + m.app.Workspace.Name
 		}
@@ -826,7 +832,7 @@ func (m *Model) executeCommand(command string) (tea.Model, tea.Cmd) {
 	if (verb == "ws" || verb == "workspace" || verb == "workspaces") && len(fields) == 2 && !strings.HasPrefix(fields[1], "/") {
 		if entry, ok := m.findWorkspace(fields[1]); ok {
 			m.message = "Switching to " + entry.Name + "…"
-			return m, m.switchWorkspace(entry.Path)
+			return m, m.switchWorkspace(entry.Path, false)
 		}
 		m.message = "Workspace not found: " + fields[1]
 		return m, nil
@@ -836,7 +842,7 @@ func (m *Model) executeCommand(command string) (tea.Model, tea.Cmd) {
 		if len(fields) > 1 && strings.HasPrefix(fields[1], "/") {
 			filter = strings.TrimPrefix(strings.Join(fields[1:], " "), "/")
 		}
-		m.navigate(sectionFor(target), filter, "")
+		m.jumpTo(sectionFor(target), filter, "")
 		return m, nil
 	}
 	switch verb {
@@ -850,7 +856,7 @@ func (m *Model) executeCommand(command string) (tea.Model, tea.Cmd) {
 		return m, m.reloadCmd()
 	case "use", "context", "ctx":
 		if len(fields) == 1 && (verb == "context" || verb == "ctx") {
-			m.navigate(environmentsSection, "", "")
+			m.jumpTo(environmentsSection, "", "")
 			m.message = "Select an environment and press r to make it active"
 			return m, nil
 		}
@@ -951,6 +957,17 @@ func (m *Model) navigate(next section, filter, scope string) {
 	m.message = "Viewing " + next.String()
 }
 
+// jumpTo changes views without creating a breadcrumb. Command and alias
+// navigation is a direct jump, not a drill-down entered with Enter.
+func (m *Model) jumpTo(next section, filter, scope string) {
+	if next == workspacesSection {
+		m.refreshWorkspaces()
+	}
+	m.history, m.forward = nil, nil
+	m.section, m.filter, m.scope, m.selected = next, filter, scope, 0
+	m.message = "Viewing " + next.String()
+}
+
 func (m *Model) goBack() {
 	if len(m.history) == 0 {
 		m.message = "Already at the root view"
@@ -1016,18 +1033,18 @@ func (m *Model) switchToSelectedWorkspace() tea.Cmd {
 			return nil
 		}
 		m.message = "Switching to " + entry.Name + "…"
-		return m.switchWorkspace(entry.Path)
+		return m.switchWorkspace(entry.Path, true)
 	}
 	return nil
 }
 
 // switchWorkspace loads a different workspace, refreshes its interaction files,
 // and records it in the central registry as most-recently-used.
-func (m *Model) switchWorkspace(path string) tea.Cmd {
+func (m *Model) switchWorkspace(path string, drillDown bool) tea.Cmd {
 	return func() tea.Msg {
 		loaded, err := app.Load(path)
 		if err != nil {
-			return workspaceSwitchedMsg{err: err}
+			return workspaceSwitchedMsg{drillDown: drillDown, err: err}
 		}
 		aliases, _ := loadAliases(loaded.Workspace.Root)
 		hotkeys, _ := loadHotkeys(loaded.Workspace.Root)
@@ -1038,7 +1055,7 @@ func (m *Model) switchWorkspace(path string) tea.Cmd {
 			_ = cfg.Save()
 			entries = cfg.Workspaces
 		}
-		return workspaceSwitchedMsg{app: loaded, dir: loaded.Workspace.Root, aliases: aliases, hotkeys: hotkeys, workspaces: entries}
+		return workspaceSwitchedMsg{app: loaded, dir: loaded.Workspace.Root, aliases: aliases, hotkeys: hotkeys, workspaces: entries, drillDown: drillDown}
 	}
 }
 

@@ -21,7 +21,7 @@ func testModel() *Model {
 	return NewModel(context.Background(), "/tmp/demo", "local", &app.App{Workspace: ws})
 }
 
-func TestK9sStyleResourceAliasAndHistory(t *testing.T) {
+func TestCommandNavigationDoesNotCreateBreadcrumb(t *testing.T) {
 	m := testModel()
 	m.mode, m.input = commandMode, "sc"
 	_, _ = m.handleKey("enter")
@@ -29,12 +29,12 @@ func TestK9sStyleResourceAliasAndHistory(t *testing.T) {
 		t.Fatalf("section = %s", m.section)
 	}
 	_, _ = m.handleKey("q")
-	if m.section != requestsSection {
-		t.Fatalf("q did not return to requests: %s", m.section)
+	if m.section != scenariosSection {
+		t.Fatalf("q unexpectedly navigated from command-opened view: %s", m.section)
 	}
 	_, _ = m.handleKey("]")
 	if m.section != scenariosSection {
-		t.Fatalf("] did not move forward: %s", m.section)
+		t.Fatalf("] unexpectedly moved forward after command navigation: %s", m.section)
 	}
 }
 
@@ -292,6 +292,39 @@ func TestWorkspaceSwitchReloadsAndResets(t *testing.T) {
 	}
 	if m.section != collectionsSection || m.scope != "" {
 		t.Fatalf("state not reset after switch: section=%s scope=%q", m.section, m.scope)
+	}
+	_, _ = m.handleKey("esc")
+	if m.section != collectionsSection {
+		t.Fatalf("Esc after command workspace switch unexpectedly navigated: %s", m.section)
+	}
+}
+
+func TestEscFollowsCollectionHierarchy(t *testing.T) {
+	m := testModel()
+	m.section = collectionsSection
+	m.app.Workspace.Collections = []model.Collection{{Name: "users"}}
+	_, _ = m.handleKey("esc")
+	if m.section != collectionsSection {
+		t.Fatalf("Esc from directly opened collections = %s, want no-op", m.section)
+	}
+	_, _ = m.handleKey("enter")
+	if m.section != requestsSection || m.scope != "users" {
+		t.Fatalf("Enter did not drill into collection: %s /%q", m.section, m.scope)
+	}
+	_, _ = m.handleKey("esc")
+	if m.section != collectionsSection || m.scope != "" {
+		t.Fatalf("Esc from drilled requests = %s /%q, want collections", m.section, m.scope)
+	}
+	m.section = workspacesSection
+	m.workspaces = []config.Entry{{Name: "Demo", Path: "/tmp/demo"}}
+	m.selected = 0
+	_, _ = m.handleKey("enter")
+	if m.section != collectionsSection {
+		t.Fatalf("Enter from workspaces did not drill into collections: %s", m.section)
+	}
+	_, _ = m.handleKey("esc")
+	if m.section != workspacesSection {
+		t.Fatalf("Esc from drilled collections = %s, want workspaces", m.section)
 	}
 }
 
