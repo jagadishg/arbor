@@ -387,7 +387,13 @@ func (m *Model) handleKey(key string) (tea.Model, tea.Cmd) {
 			m.message = "No response recorded for this resource"
 		}
 	case "r":
-		return m, m.runSelected()
+		if m.section != environmentsSection {
+			return m, m.runSelected()
+		}
+	case "s":
+		if m.section == environmentsSection {
+			return m, m.runSelected()
+		}
 	case "e":
 		return m, m.editSelected()
 	case "/":
@@ -863,7 +869,7 @@ func (m *Model) executeCommand(command string) (tea.Model, tea.Cmd) {
 	case "use", "context", "ctx":
 		if len(fields) == 1 && (verb == "context" || verb == "ctx") {
 			m.jumpTo(environmentsSection, "", "")
-			m.message = "Select an environment and press r to make it active"
+			m.message = "Select an environment and press s to make it active"
 			return m, nil
 		}
 		if len(fields) != 2 {
@@ -1230,7 +1236,7 @@ func (m *Model) cancelRunningRequest(closeView bool) {
 // none is active, so a run never fails obscurely on undefined {{variables}}.
 func (m *Model) requireEnvironment() bool {
 	if m.environment == "" && len(m.app.Workspace.Environments) > 0 {
-		m.message = "No environment selected — press :use <name> or open :env and pick one with r"
+		m.message = "No environment selected — press :use <name> or open :env and pick one with s"
 		return false
 	}
 	return true
@@ -2622,7 +2628,7 @@ func (m *Model) contextualShortcuts() string {
 	case variablesSection:
 		return "[j/k] move  [enter] describe  [e] edit arbor.yaml  [/] filter  [:] command"
 	case environmentsSection:
-		return "[j/k] move  [enter] describe  [e] edit  [r] select  [:] command"
+		return "[j/k] move  [enter] describe  [e] edit  [s] select  [:] command"
 	case workspacesSection:
 		return "[j/k] move  [enter] open  [ctrl+d] unregister  [:] command"
 	default:

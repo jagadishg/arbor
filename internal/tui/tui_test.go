@@ -65,6 +65,21 @@ func TestResourceCommandCanSetFilterAndContextView(t *testing.T) {
 	}
 }
 
+func TestEnvironmentSelectionUsesS(t *testing.T) {
+	m := testModel()
+	m.section = environmentsSection
+	m.selected = 1 // staging
+
+	_, _ = m.handleKey("r")
+	if m.environment == "staging" {
+		t.Fatal("r unexpectedly selected the environment")
+	}
+	_, _ = m.handleKey("s")
+	if m.environment != "staging" {
+		t.Fatalf("environment = %q, want staging", m.environment)
+	}
+}
+
 func TestWorkspaceVariablesViewAndEditorTarget(t *testing.T) {
 	ws := &model.Workspace{
 		Name:      "Demo",
