@@ -461,6 +461,101 @@ func TestCtrlCQuitsFromViewers(t *testing.T) {
 	if _, cmd := m.handleKey("ctrl+c"); !isQuit(cmd) {
 		t.Fatal("ctrl+c in overlay viewer did not quit")
 	}
+
+	m.mode = commandMode
+	if _, cmd := m.handleKey("ctrl+c"); !isQuit(cmd) {
+		t.Fatal("ctrl+c in command prompt did not quit")
+	}
+}
+
+func TestSplitPaneHorizontalScrollAndWrapToggle(t *testing.T) {
+	ws := &model.Workspace{Name: "Demo", Root: "/tmp/demo", Requests: []model.Request{{ID: "users.get", Name: "Get", Method: "GET", URL: "https://example.com/" + strings.Repeat("long/", 30)}}}
+	m := NewModel(context.Background(), "/tmp/demo", "", &app.App{Workspace: ws})
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	m.requestResult = &model.RequestResult{Request: ws.Requests[0], Sent: &model.SentRequest{Method: "GET", URL: ws.Requests[0].URL}, Response: &model.Response{Status: "200 OK", StatusCode: 200, Body: []byte(`{"message":"` + strings.Repeat("response/", 30) + `"}`)}}
+	m.overlay, m.focusedPane = responseOverlay, paneRequest
+	if m.requestWrap || m.responseWrap {
+		t.Fatal("content should not wrap by default")
+	}
+	_, _ = m.handleKey("right")
+	if m.requestHorizontal == 0 {
+		t.Fatal("right arrow did not horizontally scroll the focused pane")
+	}
+	_, _ = m.handleKey("w")
+	if !m.requestWrap || m.responseWrap || m.requestHorizontal != 0 {
+		t.Fatalf("wrap toggle state = request:%v response:%v horizontal:%d", m.requestWrap, m.responseWrap, m.requestHorizontal)
+	}
+	_, _ = m.handleKey("w")
+	if m.requestWrap || m.responseWrap || m.requestHorizontal != 0 {
+		t.Fatalf("wrap re-enable state = request:%v response:%v horizontal:%d", m.requestWrap, m.responseWrap, m.requestHorizontal)
+	}
+	_, _ = m.handleKey("tab")
+	_, _ = m.handleKey("w")
+	if m.requestWrap || !m.responseWrap {
+		t.Fatalf("focused response wrap state = request:%v response:%v", m.requestWrap, m.responseWrap)
+	}
+	_, _ = m.handleKey("w")
+	_, _ = m.handleKey("right")
+	if m.responseHorizontal == 0 {
+		t.Fatal("right arrow did not horizontally scroll the focused response pane")
+	}
+	_, _ = m.handleKey("left")
+	if m.responseHorizontal != 0 {
+		t.Fatalf("left arrow did not scroll response back: %d", m.responseHorizontal)
+	}
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	if m.responseHorizontal == 0 {
+		t.Fatal("Bubble Tea right-arrow event did not scroll the focused response pane")
+	}
+	_, _ = m.handleKey("←")
+	if m.responseHorizontal != 0 {
+		t.Fatalf("unicode left-arrow event did not move back: %d", m.responseHorizontal)
+	}
+}
+
+func TestResponsePaneWrapsHeadersAndBodyWhenEnabled(t *testing.T) {
+	m := testModel()
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.requestResult = &model.RequestResult{
+		Request: m.app.Workspace.Requests[0],
+		Response: &model.Response{
+			Status:     "200 OK",
+			StatusCode: 200,
+			Headers:    map[string][]string{"X-Trace": {strings.Repeat("trace-", 30)}},
+			Body:       []byte(`{"message":"` + strings.Repeat("body-", 40) + `"}`),
+		},
+	}
+	m.overlay, m.focusedPane = responseOverlay, paneResponse
+	width := m.currentSplitLayout().responseWidth
+	withoutWrap := m.responseDocumentLines(width)
+	_, _ = m.handleKey("w")
+	withWrap := m.responseDocumentLines(width)
+	if len(withWrap) <= len(withoutWrap) {
+		t.Fatalf("response did not add wrapped lines: without=%d with=%d", len(withoutWrap), len(withWrap))
+	}
+}
+
+func TestReadOnlyOverlayHorizontalScrollAndWrapToggle(t *testing.T) {
+	m := testModel()
+	m.app.Workspace.Requests[0].Description = strings.Repeat("long description ", 20)
+	m.app.Workspace.Requests[1].Description = strings.Repeat("long description ", 20)
+	m.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
+	m.overlay = describeOverlay
+	if m.overlayWrap {
+		t.Fatal("overlay should not wrap by default")
+	}
+	if _, _ = m.handleKey("w"); !m.overlayWrap {
+		t.Fatal("overlay did not enable wrapping")
+	}
+	_, _ = m.handleKey("w")
+	_, _ = m.handleKey("right")
+	if m.overlayHorizontal == 0 {
+		t.Fatal("right arrow did not horizontally scroll the overlay")
+	}
+	_, _ = m.handleKey("left")
+	if m.overlayHorizontal != 0 {
+		t.Fatalf("left arrow did not scroll overlay back: %d", m.overlayHorizontal)
+	}
 }
 
 func TestSplitPaneRowsKeepStableWidth(t *testing.T) {
@@ -470,6 +565,15 @@ func TestSplitPaneRowsKeepStableWidth(t *testing.T) {
 		if width := lipgloss.Width(row); width != 32 {
 			t.Fatalf("row %d has width %d, want 32: %q", index, width, row)
 		}
+	}
+}
+
+func TestSplitPaneHorizontalScrollDoesNotMoveFooter(t *testing.T) {
+	m := testModel()
+	rows := m.renderPaneOffset("Response", []string{strings.Repeat("x", 80)}, 32, 6, 0, 5, true, "SHORTCUTS")
+	footer := ansi.Strip(rows[len(rows)-2])
+	if !strings.Contains(footer, "SHORTCUTS") {
+		t.Fatalf("footer was horizontally scrolled: %q", footer)
 	}
 }
 

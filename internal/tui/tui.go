@@ -152,6 +152,12 @@ type Model struct {
 	focusedPane           pane
 	requestOffset         int
 	responseOffset        int
+	requestHorizontal     int
+	responseHorizontal    int
+	overlayHorizontal     int
+	requestWrap           bool
+	responseWrap          bool
+	overlayWrap           bool
 	width                 int
 	height                int
 	running               bool
@@ -222,6 +228,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.running, m.cancel, m.requestResult, m.scenarioReport = false, nil, &result, nil
 		m.overlay, m.focusedPane, m.requestOffset, m.responseOffset = responseOverlay, paneResponse, 0, 0
+		m.requestHorizontal, m.responseHorizontal = 0, 0
 		m.requestShowDefinition, m.revealSecrets = false, false
 		if result.Passed() {
 			m.message = "Request completed"
@@ -294,6 +301,14 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleKey(key string) (tea.Model, tea.Cmd) {
+	if key == "ctrl+c" {
+		if m.running && m.cancel != nil {
+			m.cancel()
+			m.message = "Cancelling request…"
+			return m, nil
+		}
+		return m, tea.Quit
+	}
 	if m.mode == commandMode || m.mode == filterMode || m.mode == responseSearchMode {
 		return m.handleInput(key)
 	}
@@ -401,9 +416,11 @@ func (m *Model) handleSplitKey(key string) (tea.Model, tea.Cmd) {
 	lineStep := 1
 	pageStep := layout.available
 	offset := &m.responseOffset
+	horizontal := &m.responseHorizontal
 	lines := m.responsePaneLines(layout.responseWidth)
 	if m.focusedPane == paneRequest {
 		offset = &m.requestOffset
+		horizontal = &m.requestHorizontal
 		lines = m.requestPaneLines(layout.requestWidth)
 	}
 	switch key {
@@ -413,23 +430,22 @@ func (m *Model) handleSplitKey(key string) (tea.Model, tea.Cmd) {
 		} else {
 			m.overlay = noOverlay
 		}
-	case "ctrl+c":
-		if m.running && m.cancel != nil {
-			m.cancel()
-			m.message = "Cancelling request…"
-			return m, nil
-		}
-		return m, tea.Quit
 	case "tab":
 		if m.focusedPane == paneRequest {
 			m.focusedPane = paneResponse
 		} else {
 			m.focusedPane = paneRequest
 		}
-	case "h", "left":
+	case "h":
 		m.focusedPane = paneRequest
-	case "l", "right":
+	case "l":
 		m.focusedPane = paneResponse
+	case "left", "←":
+		*horizontal = max(0, *horizontal-1)
+	case "right", "→":
+		if !m.paneWrap(m.focusedPane) {
+			*horizontal = min(*horizontal+1, maxHorizontalOffset(lines, paneContentWidth(m.focusedPane, layout)))
+		}
 	case "j", "down", "ctrl+d", "pagedown":
 		if key == "j" || key == "down" {
 			*offset += lineStep
@@ -471,8 +487,22 @@ func (m *Model) handleSplitKey(key string) (tea.Model, tea.Cmd) {
 	case "y":
 		m.requestShowDefinition = !m.requestShowDefinition
 		m.requestOffset = 0
+		m.requestHorizontal = 0
 	case "x":
 		m.revealSecrets = !m.revealSecrets
+	case "w", "W":
+		if m.focusedPane == paneRequest {
+			m.requestWrap = !m.requestWrap
+			m.requestHorizontal = 0
+		} else {
+			m.responseWrap = !m.responseWrap
+			m.responseHorizontal = 0
+		}
+		if m.paneWrap(m.focusedPane) {
+			m.message = "Content wrapping enabled"
+		} else {
+			m.message = "Content wrapping disabled — use ←/→ to pan"
+		}
 	case "c":
 		return m, m.copyFromFocusedPane()
 	case "r":
@@ -601,13 +631,21 @@ func (m *Model) handleOverlayKey(key string) (tea.Model, tea.Cmd) {
 		m.jumpToOverlayMatch(true)
 	case "N", "shift+n":
 		m.jumpToOverlayMatch(false)
-	case "ctrl+c":
-		if m.running && m.cancel != nil {
-			m.cancel()
-			m.message = "Cancelling request…"
-			return m, nil
+	case "left", "←":
+		m.overlayHorizontal = max(0, m.overlayHorizontal-1)
+	case "right", "→":
+		if !m.overlayWrap {
+			lines := m.overlayDocumentLines(m.overlayContentWidth())
+			m.overlayHorizontal = min(m.overlayHorizontal+1, maxHorizontalOffset(lines, m.overlayContentWidth()))
 		}
-		return m, tea.Quit
+	case "w", "W":
+		m.overlayWrap = !m.overlayWrap
+		m.overlayHorizontal = 0
+		if m.overlayWrap {
+			m.message = "Content wrapping enabled"
+		} else {
+			m.message = "Content wrapping disabled — use ←/→ to pan"
+		}
 	case "j", "down", "ctrl+d", "pagedown":
 		m.overlayOffset += max(1, m.modalHeight()/3)
 	case "k", "up", "ctrl+u", "pageup":
@@ -1475,6 +1513,11 @@ func (m *Model) renderTable(width, height int) string {
 }
 
 func (m *Model) frameLine(value string, width int) string {
+	return m.frameLineOffset(value, width, 0)
+}
+
+func (m *Model) frameLineOffset(value string, width, horizontal int) string {
+	value = ansi.Cut(value, horizontal, horizontal+width)
 	padding := max(0, width-lipgloss.Width(value))
 	return "│" + value + strings.Repeat(" ", padding) + "│"
 }
@@ -1560,8 +1603,8 @@ func (m *Model) renderSplit(width, height int) string {
 	m.requestOffset = clampOffset(m.requestOffset, len(reqLines), layout.available)
 	m.responseOffset = clampOffset(m.responseOffset, len(respLines), layout.available)
 
-	left := m.renderPane(m.requestPaneTitle(), reqLines, layout.leftOuter, layout.height, m.requestOffset, m.focusedPane == paneRequest, m.requestPaneFooter())
-	responseFooter := "[j/k] scroll  [/] search  [c] copy body  [q] close"
+	left := m.renderPaneOffset(m.requestPaneTitle(), reqLines, layout.leftOuter, layout.height, m.requestOffset, m.requestHorizontal, m.focusedPane == paneRequest, m.requestPaneFooter())
+	responseFooter := "[j/k] scroll  [←/→] pan  " + wrapHint(m.responseWrap) + "  [/] search  [c] copy  [q] close"
 	if m.responseSearch != "" {
 		matches := m.responseSearchMatches(layout.responseWidth)
 		responseFooter += fmt.Sprintf("  /%s (%d)", m.responseSearch, len(matches))
@@ -1572,7 +1615,7 @@ func (m *Model) renderSplit(width, height int) string {
 	} else if m.responseSearch != "" {
 		responseTitle = "Response /" + m.responseSearch
 	}
-	right := m.renderPane(responseTitle, respLines, layout.rightOuter, layout.height, m.responseOffset, m.focusedPane == paneResponse, responseFooter)
+	right := m.renderPaneOffset(responseTitle, respLines, layout.rightOuter, layout.height, m.responseOffset, m.responseHorizontal, m.focusedPane == paneResponse, responseFooter)
 
 	rows := make([]string, layout.height)
 	for index := 0; index < layout.height; index++ {
@@ -1595,14 +1638,15 @@ func (m *Model) requestPaneTitle() string {
 }
 
 func (m *Model) requestPaneFooter() string {
+	wrap := wrapHint(m.requestWrap)
 	if m.requestShowDefinition || m.requestResult.Sent == nil {
-		return "[y] sent  [c] copy curl  [e] edit"
+		return "[y] sent  " + wrap + "  [c] copy curl  [e] edit"
 	}
 	reveal := "[x] reveal"
 	if m.revealSecrets {
 		reveal = "[x] hide"
 	}
-	return "[y] definition  " + reveal + "  [c] copy curl  [e] edit"
+	return "[y] definition  " + reveal + "  " + wrap + "  [c] copy curl  [e] edit"
 }
 
 func clampOffset(offset, total, available int) int {
@@ -1619,6 +1663,10 @@ func clampOffset(offset, total, available int) int {
 // renderPane frames a list of (already-styled) content lines into a box of exactly
 // outerWidth columns and height rows, scrolled to offset.
 func (m *Model) renderPane(title string, lines []string, outerWidth, height, offset int, focused bool, footer string) []string {
+	return m.renderPaneOffset(title, lines, outerWidth, height, offset, 0, focused, footer)
+}
+
+func (m *Model) renderPaneOffset(title string, lines []string, outerWidth, height, offset, horizontal int, focused bool, footer string) []string {
 	outerWidth = max(4, outerWidth)
 	inner := outerWidth - 2
 	contentWidth := max(0, inner-1)
@@ -1635,7 +1683,7 @@ func (m *Model) renderPane(title string, lines []string, outerWidth, height, off
 	top := border.Render("┌") + styledTitle + border.Render(strings.Repeat("─", max(0, inner-lipgloss.Width(titleText)))+"┐")
 
 	frame := func(content string) string {
-		content = ansi.Truncate(content, contentWidth, "…")
+		content = ansi.Cut(content, horizontal, horizontal+contentWidth)
 		pad := max(0, contentWidth-lipgloss.Width(content))
 		return border.Render("│") + " " + content + strings.Repeat(" ", pad) + border.Render("│")
 	}
@@ -1653,9 +1701,36 @@ func (m *Model) renderPane(title string, lines []string, outerWidth, height, off
 	if len(lines) > available {
 		hint += fmt.Sprintf("  %d-%d/%d", offset+1, end, len(lines))
 	}
-	out = append(out, frame(lipgloss.NewStyle().Foreground(muted).Render(hint)))
+	footerFrame := func(content string) string {
+		content = ansi.Truncate(content, contentWidth, "…")
+		pad := max(0, contentWidth-lipgloss.Width(content))
+		return border.Render("│") + " " + content + strings.Repeat(" ", pad) + border.Render("│")
+	}
+	out = append(out, footerFrame(lipgloss.NewStyle().Foreground(muted).Render(hint)))
 	out = append(out, border.Render("└"+strings.Repeat("─", inner)+"┘"))
 	return out
+}
+
+func paneContentWidth(focused pane, layout splitLayout) int {
+	if focused == paneRequest {
+		return layout.requestWidth
+	}
+	return layout.responseWidth
+}
+
+func (m *Model) paneWrap(focused pane) bool {
+	if focused == paneRequest {
+		return m.requestWrap
+	}
+	return m.responseWrap
+}
+
+func maxHorizontalOffset(lines []string, width int) int {
+	maxWidth := 0
+	for _, line := range lines {
+		maxWidth = max(maxWidth, lipgloss.Width(line))
+	}
+	return max(0, maxWidth-max(1, width))
 }
 
 func (m *Model) requestPaneLines(inner int) []string {
@@ -1679,7 +1754,7 @@ func (m *Model) requestDefinitionLines(inner int) []string {
 		raw = strings.ToUpper(m.requestResult.Request.Method) + " " + m.requestResult.Request.URL
 	}
 	var out []string
-	for _, line := range strings.Split(wrap(raw, inner), "\n") {
+	for _, line := range m.contentLines(raw, inner, m.requestWrap) {
 		out = append(out, highlightYAMLLine(line))
 	}
 	return out
@@ -1699,7 +1774,7 @@ func (m *Model) sentRequestLines(sent *model.SentRequest, inner int) []string {
 
 	var out []string
 	requestLine := strings.ToUpper(sent.Method) + " " + reveal(sent.URL)
-	for _, line := range strings.Split(wrap(requestLine, inner), "\n") {
+	for _, line := range m.contentLines(requestLine, inner, m.requestWrap) {
 		out = append(out, highlightYAMLLine(line))
 	}
 
@@ -1707,7 +1782,7 @@ func (m *Model) sentRequestLines(sent *model.SentRequest, inner int) []string {
 		out = append(out, "", sectionStyle.Render("Headers"))
 		for _, key := range sortedHeaderKeys(sent.Headers) {
 			value := reveal(strings.Join(sent.Headers[key], ", "))
-			for _, line := range strings.Split(wrap(key+": "+value, inner), "\n") {
+			for _, line := range m.contentLines(key+": "+value, inner, m.requestWrap) {
 				out = append(out, headerStyle.Render(line))
 			}
 		}
@@ -1715,7 +1790,7 @@ func (m *Model) sentRequestLines(sent *model.SentRequest, inner int) []string {
 
 	if strings.TrimSpace(sent.Body) != "" {
 		out = append(out, "", sectionStyle.Render("Body"))
-		for _, line := range strings.Split(wrap(reveal(sent.Body), inner), "\n") {
+		for _, line := range m.contentLines(reveal(sent.Body), inner, m.requestWrap) {
 			out = append(out, highlightJSONLine(line))
 		}
 	}
@@ -1787,13 +1862,14 @@ func (m *Model) responseDocumentLines(inner int) []string {
 	}
 	if result.Error != nil {
 		lines := []string{"Request failed", ""}
-		for _, line := range strings.Split(wrap(result.Error.Error(), inner), "\n") {
+		for _, line := range m.contentLines(result.Error.Error(), inner, m.responseWrap) {
 			lines = append(lines, line)
 		}
 		return lines
 	}
 	response := result.Response
-	lines := []string{"● " + truncate(response.Status, max(1, inner-2)), truncate(fmt.Sprintf("%s · %d B", response.Duration.Round(time.Millisecond), response.Size), inner)}
+	lines := m.contentLines("● "+response.Status, max(1, inner-2), m.responseWrap)
+	lines = append(lines, m.contentLines(fmt.Sprintf("%s · %d B", response.Duration.Round(time.Millisecond), response.Size), inner, m.responseWrap)...)
 	if len(result.Assertions) > 0 {
 		lines = append(lines, "", "Assertions")
 		for _, assertion := range result.Assertions {
@@ -1805,17 +1881,17 @@ func (m *Model) responseDocumentLines(inner int) []string {
 			if assertion.Message != "" {
 				text += " — " + assertion.Message
 			}
-			lines = append(lines, mark+" "+truncate(text, max(1, inner-2)))
+			lines = append(lines, m.contentLines(mark+" "+text, max(1, inner-2), m.responseWrap)...)
 		}
 	}
 	if len(response.Headers) > 0 {
 		lines = append(lines, "", "Headers")
 		for _, key := range sortedHeaderKeys(response.Headers) {
-			lines = append(lines, truncate(key+": "+strings.Join(response.Headers[key], ", "), inner))
+			lines = append(lines, m.contentLines(key+": "+strings.Join(response.Headers[key], ", "), inner, m.responseWrap)...)
 		}
 	}
 	lines = append(lines, "", "Body")
-	lines = append(lines, strings.Split(formatBody(response.Body, inner), "\n")...)
+	lines = append(lines, m.contentLines(formatBody(response.Body), inner, m.responseWrap)...)
 	return lines
 }
 
@@ -1970,7 +2046,7 @@ func (m *Model) renderOverlay(width, height int) string {
 	titleText := fmt.Sprintf("─ %s ", title)
 	top := "┌" + lipgloss.NewStyle().Foreground(blue).Bold(true).Render(titleText) + strings.Repeat("─", max(0, inner-lipgloss.Width(titleText))) + "┐"
 
-	hint := "[esc] close  [j/k] scroll  [g/G] top/end  [/] search  [n/N] match"
+	hint := "[esc] close  [j/k] scroll  [←/→] pan  [w] wrap  [g/G] top/end  [/] search  [n/N] match"
 	switch m.overlay {
 	case describeOverlay, yamlOverlay:
 		hint += "  [e] edit  [r] run"
@@ -2000,7 +2076,7 @@ func (m *Model) renderOverlay(width, height int) string {
 			current := m.overlayMatch >= 0 && m.overlayMatch < len(matches) && matches[m.overlayMatch] == index
 			line = highlightSearchLine(ansi.Strip(line), m.overlaySearch, current)
 		}
-		lines = append(lines, m.frameLine(" "+line, inner))
+		lines = append(lines, m.frameLineOffset(" "+line, inner, m.overlayHorizontal))
 	}
 	for len(lines) < height-2 {
 		lines = append(lines, m.frameLine("", inner))
@@ -2028,7 +2104,22 @@ func (m *Model) overlayAvailable() int {
 
 func (m *Model) overlayDocumentLines(width int) []string {
 	_, content := m.overlayContent(width)
-	return strings.Split(wrap(content, width), "\n")
+	return m.contentLines(content, width, m.overlayWrap)
+}
+
+func (m *Model) contentLines(value string, width int, shouldWrap bool) []string {
+	value = sanitizeText(value)
+	if shouldWrap {
+		value = wrap(value, width)
+	}
+	return strings.Split(value, "\n")
+}
+
+func wrapHint(enabled bool) string {
+	if enabled {
+		return "[w] wrap:on"
+	}
+	return "[w] wrap:off"
 }
 
 func (m *Model) overlaySearchMatches() []int {
@@ -2206,7 +2297,7 @@ func (m *Model) responseContent(width int) string {
 			}
 			lines = append(lines, line)
 		}
-		return strings.Join(lines, "\n") + "\n\n" + formatBody(response.Body, width)
+		return strings.Join(lines, "\n") + "\n\n" + formatBody(response.Body)
 	}
 	if m.scenarioReport != nil {
 		lines := []string{}
@@ -2233,6 +2324,9 @@ func (m *Model) helpContent() string {
 	help := strings.Join([]string{
 		"Navigation", "  j/k, ↑/↓     move selection", "  g/G          first/last resource", "  Ctrl-f/b     page down/up", "  Enter        drill into a collection / switch workspace (or describe)", "  Esc, q, h, [ back through view history", "  ], →         forward through view history", "", "Resource actions", "  Enter, d     describe selected resource", "  y            show YAML", "  e            edit in $EDITOR", "  r            run selected request or scenario", "  l            show last response (like logs)", "  Ctrl-w       toggle wide table columns", "", "Views and commands", "  :            command prompt (top, k9s-style)", "  :ws          switch workspace (project); :ws <name> jumps directly", "  :use <env>   set the active environment (:ctx is a k9s-style alias)", "  :attach f=./x attach a multipart file to a request", "  :collections browse collections; :req :sc :env for the rest", "", "Response split view", "  Tab          switch focus between request and response", "  h/l, ←/→     focus request / response pane", "  j/k          scroll one line; Ctrl-f/b page; g/G top/end", "  H/M/L        visible top/middle/bottom", "  /            search response; Enter applies live query", "  n/N          next/previous response match", "  y            request pane: toggle sent / definition", "  x            request pane: reveal / hide secrets", "  c            copy — response body (response pane) or curl (request pane)", "  e            edit the request", "  Ctrl-a       show resource aliases", "  Tab/Ctrl-f/→ accept command suggestion", "  ↑/↓          choose command suggestion", "  Ctrl-u       clear command; Ctrl-w removes its last word", "  Ctrl-r       reload workspace", "  ?            this help", "  Ctrl-c, :q   quit (or cancel a running request)",
 	}, "\n")
+	help = strings.ReplaceAll(help, "  h/l, ←/→     focus request / response pane", "  h/l          focus request / response pane")
+	help = strings.ReplaceAll(help, "  j/k          scroll one line; Ctrl-f/b page; g/G top/end", "  ←/→          scroll horizontally\n  j/k          scroll one line; Ctrl-f/b page; g/G top/end")
+	help = strings.ReplaceAll(help, "  H/M/L        visible top/middle/bottom", "  H/M/L        visible top/middle/bottom\n  w            toggle wrapping")
 	if len(m.hotkeys) == 0 {
 		return help
 	}
@@ -2274,10 +2368,10 @@ func (m *Model) contextualShortcuts() string {
 		return "[enter] execute  [tab] complete  [esc] cancel"
 	}
 	if m.inSplitView() {
-		return "[tab] pane  [j/k] scroll  [y] view  [x] reveal  [c] copy  [q] close"
+		return "[tab] pane  [j/k] scroll  [←/→] pan  [w] wrap  [c] copy  [q] close"
 	}
 	if m.overlay != noOverlay {
-		shortcuts := "[j/k] scroll  [g/G] top/end  [/] search  [n/N] match  [q] close"
+		shortcuts := "[j/k] scroll  [←/→] pan  [w] wrap  [g/G] top/end  [/] search  [n/N] match  [q] close"
 		if m.overlay == yamlOverlay || m.overlay == describeOverlay {
 			shortcuts += "  [e] edit  [r] run"
 		}
@@ -2398,13 +2492,13 @@ func isNumber(value string) bool {
 	return err == nil
 }
 
-func formatBody(body []byte, width int) string {
+func formatBody(body []byte) string {
 	var value any
 	if json.Unmarshal(body, &value) == nil {
 		formatted, _ := json.MarshalIndent(value, "", "  ")
-		return wrap(string(formatted), width)
+		return string(formatted)
 	}
-	return wrap(string(body), width)
+	return string(body)
 }
 func wrap(value string, width int) string {
 	value = sanitizeText(value)
