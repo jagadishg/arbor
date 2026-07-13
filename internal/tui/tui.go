@@ -24,6 +24,7 @@ import (
 	"github.com/jagadishg/arbor/internal/buildinfo"
 	"github.com/jagadishg/arbor/internal/config"
 	"github.com/jagadishg/arbor/internal/model"
+	"github.com/jagadishg/arbor/internal/workspace"
 	"gopkg.in/yaml.v3"
 )
 
@@ -60,6 +61,7 @@ const (
 	responseOverlay
 	helpOverlay
 	aliasOverlay
+	confirmOverlay
 )
 
 type pane int
@@ -179,6 +181,11 @@ type Model struct {
 	aliases               map[string]string
 	hotkeys               map[string]hotkey
 	workspaces            []config.Entry
+	confirmKind           string
+	confirmName           string
+	confirmPath           string
+	confirmDir            string
+	confirmChoice         int
 }
 
 type suggestion struct {
@@ -339,7 +346,13 @@ func (m *Model) handleKey(key string) (tea.Model, tea.Cmd) {
 		if count := len(m.items()); count > 0 {
 			m.selected = count - 1
 		}
-	case "ctrl+d", "ctrl+f", "pagedown":
+	case "ctrl+d":
+		if m.section == workspacesSection || m.section == collectionsSection || m.section == requestsSection {
+			m.prepareDelete()
+		} else {
+			m.move(max(1, m.tableHeight()/2))
+		}
+	case "ctrl+f", "pagedown":
 		m.move(max(1, m.tableHeight()/2))
 	case "ctrl+u", "ctrl+b", "pageup":
 		m.move(-max(1, m.tableHeight()/2))
@@ -609,6 +622,23 @@ func (m *Model) editRequestInView() tea.Cmd {
 func (m *Model) handleOverlayKey(key string) (tea.Model, tea.Cmd) {
 	if m.inSplitView() {
 		return m.handleSplitKey(key)
+	}
+	if m.overlay == confirmOverlay {
+		switch key {
+		case "y", "Y", "enter":
+			if key == "enter" && m.confirmChoice == 0 {
+				m.closeDeleteConfirmation()
+			} else {
+				m.executeDelete()
+			}
+		case "left", "←":
+			m.confirmChoice = 0
+		case "right", "→":
+			m.confirmChoice = 1
+		case "n", "N", "esc", "q":
+			m.closeDeleteConfirmation()
+		}
+		return m, nil
 	}
 	switch key {
 	case "q", "esc", "d", "y", "l", "?", "ctrl+a":
@@ -1018,6 +1048,99 @@ func (m *Model) refreshWorkspaces() {
 	}
 }
 
+func (m *Model) prepareDelete() {
+	items := m.items()
+	if len(items) == 0 {
+		return
+	}
+	m.confirmKind, m.confirmName, m.confirmPath, m.confirmDir = "", "", "", ""
+	switch value := items[m.selected].value.(type) {
+	case config.Entry:
+		m.confirmKind, m.confirmName, m.confirmPath = "workspace", value.Name, value.Path
+	case model.Collection:
+		m.confirmKind, m.confirmName, m.confirmPath, m.confirmDir = "collection", value.Name, value.Path, value.Dir
+	case model.Request:
+		m.confirmKind, m.confirmName, m.confirmPath = "request", value.Ref(), value.Path
+	default:
+		return
+	}
+	m.confirmChoice = 0
+	m.overlay, m.overlayOffset = confirmOverlay, 0
+}
+
+func (m *Model) closeDeleteConfirmation() {
+	m.overlay, m.overlayOffset = noOverlay, 0
+	m.confirmKind, m.confirmName, m.confirmPath, m.confirmDir = "", "", "", ""
+	m.confirmChoice = 0
+}
+
+func (m *Model) executeDelete() {
+	kind, name, path, dir := m.confirmKind, m.confirmName, m.confirmPath, m.confirmDir
+	m.closeDeleteConfirmation()
+	if kind == "" {
+		return
+	}
+	var err error
+	switch kind {
+	case "workspace":
+		var cfg *config.Config
+		cfg, err = config.Load()
+		if err == nil && !cfg.Remove(name) {
+			err = fmt.Errorf("workspace %q is not registered", name)
+		}
+		if err == nil {
+			err = cfg.Save()
+		}
+		if err == nil {
+			m.refreshWorkspaces()
+		}
+	case "request":
+		err = os.Remove(path)
+	case "collection":
+		if name != "default" && dir == "" {
+			dir = filepath.Join(workspace.DataDir(m.app.Workspace.Root), "collections", name)
+		}
+		if dir != "" && name != "default" {
+			err = os.RemoveAll(dir)
+		} else {
+			for _, request := range m.app.Workspace.Requests {
+				if request.Collection == name {
+					if removeErr := os.Remove(request.Path); removeErr != nil && !os.IsNotExist(removeErr) {
+						err = removeErr
+						break
+					}
+				}
+			}
+			if err == nil && path != "" {
+				err = os.Remove(path)
+				if os.IsNotExist(err) {
+					err = nil
+				}
+			}
+		}
+	}
+	if err != nil {
+		m.message = "Delete failed: " + err.Error()
+		return
+	}
+	if kind != "workspace" {
+		if loaded, loadErr := app.Load(m.dir); loadErr != nil {
+			m.message = "Deleted " + name + "; reload failed: " + loadErr.Error()
+			return
+		} else {
+			m.app = loaded
+		}
+	}
+	if m.selected >= len(m.items()) {
+		m.selected = max(0, len(m.items())-1)
+	}
+	if kind == "workspace" {
+		m.message = "Unregistered " + name
+	} else {
+		m.message = "Deleted " + name
+	}
+}
+
 func (m *Model) findWorkspace(name string) (config.Entry, bool) {
 	m.refreshWorkspaces()
 	for _, entry := range m.workspaces {
@@ -1356,6 +1479,9 @@ var (
 func (m *Model) render() string {
 	width, height := max(m.width, 50), max(m.height, 12)
 	header, footer := m.renderHeader(width), m.renderFooter(width)
+	if m.overlay == confirmOverlay {
+		return m.renderConfirmPopover(width, height)
+	}
 	if m.overlay != noOverlay {
 		var body string
 		if m.inSplitView() {
@@ -1382,6 +1508,56 @@ func (m *Model) render() string {
 	body := m.renderTable(width, bodyHeight)
 	sections += "\n" + body + "\n" + footer
 	return lipgloss.NewStyle().Foreground(foreground).Render(sections)
+}
+
+func (m *Model) renderConfirmPopover(width, height int) string {
+	// Render the normal workspace view underneath the popover so the modal
+	// behaves like a k9s action prompt rather than replacing the current view.
+	overlay := m.overlay
+	m.overlay = noOverlay
+	underlay := m.render()
+	m.overlay = overlay
+
+	name, path := m.confirmName, m.confirmPath
+	modalWidth := min(72, max(42, width-8))
+	contentWidth := max(20, modalWidth-6)
+	path = truncate(path, contentWidth)
+	action := "Delete"
+	if m.confirmKind == "workspace" {
+		action = "Unregister"
+	}
+	button := func(label string, selected bool) string {
+		style := lipgloss.NewStyle().Foreground(muted).Padding(0, 2)
+		if selected {
+			style = lipgloss.NewStyle().Foreground(lipgloss.Color("#1A1B26")).Background(blue).Bold(true).Padding(0, 2)
+		}
+		return style.Render(label)
+	}
+	buttons := button("Cancel", m.confirmChoice == 0) + "  " + button(action, m.confirmChoice == 1)
+	content := fmt.Sprintf("%s %q?\n\nPath: %s\n\nThis does not delete workspace files.\n\n%s\n\n[←/→] select  [Enter] choose", action, name, path, buttons)
+	modal := lipgloss.NewStyle().Width(contentWidth).Padding(1, 2).Foreground(foreground).Background(panel).Border(lipgloss.RoundedBorder()).BorderForeground(yellow).Render(content)
+	modalWidth = lipgloss.Width(modal)
+	modalHeight := lipgloss.Height(modal)
+	x := max(0, (width-modalWidth)/2)
+	y := max(0, (height-modalHeight)/2)
+
+	lines := strings.Split(underlay, "\n")
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	modalLines := strings.Split(modal, "\n")
+	for row, modalLine := range modalLines {
+		lineIndex := y + row
+		if lineIndex >= len(lines) {
+			break
+		}
+		base := lines[lineIndex]
+		if lipgloss.Width(base) < width {
+			base += strings.Repeat(" ", width-lipgloss.Width(base))
+		}
+		lines[lineIndex] = ansi.Cut(base, 0, x) + modalLine + ansi.Cut(base, x+modalWidth, width)
+	}
+	return strings.Join(lines[:height], "\n")
 }
 
 // renderPrompt draws the k9s-style command or filter prompt in its own bordered
@@ -2071,6 +2247,8 @@ func (m *Model) renderOverlay(width, height int) string {
 
 	hint := "[esc] close  [j/k] scroll  [←/→] pan  [w] wrap  [g/G] top/end  [/] search  [n/N] match"
 	switch m.overlay {
+	case confirmOverlay:
+		hint = "[y/enter] confirm  [n/esc] cancel"
 	case describeOverlay, yamlOverlay:
 		hint += "  [e] edit  [r] run"
 	case responseOverlay:
@@ -2190,6 +2368,8 @@ func (m *Model) overlayContent(width int) (string, string) {
 		return "Keyboard shortcuts", m.helpContent()
 	case aliasOverlay:
 		return "Resource aliases", m.aliasContent()
+	case confirmOverlay:
+		return "Confirm action", "Use ←/→ to choose an action, then press Enter."
 	}
 	return "", ""
 }
@@ -2420,6 +2600,8 @@ func (m *Model) contextualShortcuts() string {
 		return "[j/k] move  [enter] describe  [e] edit arbor.yaml  [/] filter  [:] command"
 	case environmentsSection:
 		return "[j/k] move  [enter] describe  [e] edit  [r] select  [:] command"
+	case workspacesSection:
+		return "[j/k] move  [enter] open  [ctrl+d] unregister  [:] command"
 	default:
 		return "[j/k] move  [enter] open  [:] command  [?] help"
 	}

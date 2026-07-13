@@ -295,6 +295,100 @@ func TestWorkspaceSwitchReloadsAndResets(t *testing.T) {
 	}
 }
 
+func TestWorkspaceUnregisterRequiresConfirmation(t *testing.T) {
+	t.Setenv("ARBOR_CONFIG", filepath.Join(t.TempDir(), "config.yaml"))
+	active, other := t.TempDir(), t.TempDir()
+	cfg := &config.Config{}
+	cfg.Register(active, "active")
+	cfg.Register(other, "other")
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	ws := &model.Workspace{Name: "active", Root: active}
+	m := NewModel(context.Background(), active, "", &app.App{Workspace: ws})
+	m.section = workspacesSection
+	m.refreshWorkspaces()
+	for index, item := range m.items() {
+		if item.label == "other" {
+			m.selected = index
+		}
+	}
+
+	_, _ = m.handleKey("ctrl+d")
+	if m.overlay != confirmOverlay || m.confirmName != "other" || m.confirmKind != "workspace" {
+		t.Fatalf("ctrl+d did not open confirmation: overlay=%v workspace=%q kind=%q", m.overlay, m.confirmName, m.confirmKind)
+	}
+	popover := ansi.Strip(m.render())
+	if !strings.Contains(popover, "Unregister \"other\"?") || !strings.Contains(popover, "workspaces") || !strings.Contains(popover, "[←/→] select") || !strings.Contains(popover, "Cancel") {
+		t.Fatalf("confirmation was not rendered as a popover: %q", popover)
+	}
+	_, _ = m.handleKey("right")
+	if m.confirmChoice != 1 || !strings.Contains(ansi.Strip(m.render()), "Unregister") {
+		t.Fatal("right navigation did not select the destructive action")
+	}
+	_, _ = m.handleKey("n")
+	if m.overlay != noOverlay || len(m.workspaces) != 2 {
+		t.Fatalf("cancel changed registry: overlay=%v workspaces=%d", m.overlay, len(m.workspaces))
+	}
+
+	_, _ = m.handleKey("ctrl+d")
+	_, _ = m.handleKey("y")
+	if m.overlay != noOverlay || m.confirmName != "" {
+		t.Fatalf("confirmation did not close: overlay=%v workspace=%q", m.overlay, m.confirmName)
+	}
+	if _, ok := m.findWorkspace("other"); ok {
+		t.Fatal("workspace remained registered after confirmation")
+	}
+	if m.app.Workspace.Root != active {
+		t.Fatal("unregister unexpectedly switched the active workspace")
+	}
+}
+
+func TestRequestAndCollectionDeleteUseConfirmation(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "arbor.yaml"), []byte("version: 1\nname: Demo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	requestPath := filepath.Join(root, "collections", "users", "get.yaml")
+	markerPath := filepath.Join(root, "collections", "users", "collection.yaml")
+	if err := os.MkdirAll(filepath.Dir(requestPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(requestPath, []byte("version: 1\nkind: request\nid: users.get\nname: Get\nmethod: GET\nurl: https://example.com\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(markerPath, []byte("version: 1\nkind: collection\nname: users\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := app.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewModel(context.Background(), root, "", &app.App{Workspace: loaded.Workspace})
+	m.section = requestsSection
+	_, _ = m.handleKey("ctrl+d")
+	_, _ = m.handleKey("right")
+	_, _ = m.handleKey("enter")
+	if _, err := os.Stat(requestPath); !os.IsNotExist(err) {
+		t.Fatalf("request still exists after delete: %v", err)
+	}
+
+	// Reload the marker-only collection and delete it through the collections view.
+	loaded, err = app.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.app = loaded
+	m.section = collectionsSection
+	_, _ = m.handleKey("ctrl+d")
+	_, _ = m.handleKey("right")
+	_, _ = m.handleKey("enter")
+	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
+		t.Fatalf("collection marker still exists after delete: %v", err)
+	}
+}
+
 func TestHeaderUsesEnvironmentLabel(t *testing.T) {
 	m := testModel()
 	_, _ = m.Update(tea.WindowSizeMsg{Width: 110, Height: 32})
