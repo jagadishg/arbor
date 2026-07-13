@@ -13,12 +13,21 @@ import (
 var placeholder = regexp.MustCompile(`\{\{\s*([A-Za-z_][A-Za-z0-9_.-]*)\s*\}\}`)
 
 type Set struct {
-	values  map[string]string
-	secrets map[string]struct{}
+	values     map[string]string
+	overrides  map[string]string
+	secretRefs map[string]string
+	secrets    map[string]struct{}
+	provider   secrets.Provider
 }
 
 func New(ws *model.Workspace, environment *model.Environment, runtime map[string]string, provider secrets.Provider) (*Set, error) {
-	set := &Set{values: map[string]string{}, secrets: map[string]struct{}{}}
+	set := &Set{
+		values:     map[string]string{},
+		overrides:  map[string]string{},
+		secretRefs: map[string]string{},
+		secrets:    map[string]struct{}{},
+		provider:   provider,
+	}
 	for key, value := range ws.Variables {
 		set.values[key] = value
 	}
@@ -27,48 +36,75 @@ func New(ws *model.Workspace, environment *model.Environment, runtime map[string
 			set.values[key] = value
 		}
 		for key, reference := range environment.Secrets {
-			if provider == nil {
-				return nil, fmt.Errorf("resolve secret %q: no secret provider configured", key)
-			}
-			value, err := provider.Resolve(reference)
-			if err != nil {
-				return nil, fmt.Errorf("resolve secret %q: %w", key, err)
-			}
-			set.values[key] = value
-			set.secrets[value] = struct{}{}
+			set.secretRefs[key] = reference
 		}
 	}
 	for key, value := range runtime {
-		set.values[key] = value
+		set.overrides[key] = value
 	}
 	return set, nil
 }
 
 func (s *Set) With(values map[string]string) *Set {
-	next := &Set{values: map[string]string{}, secrets: map[string]struct{}{}}
+	next := &Set{
+		values:     map[string]string{},
+		overrides:  map[string]string{},
+		secretRefs: map[string]string{},
+		secrets:    map[string]struct{}{},
+		provider:   s.provider,
+	}
 	for key, value := range s.values {
 		next.values[key] = value
+	}
+	for key, value := range s.overrides {
+		next.overrides[key] = value
+	}
+	for key, reference := range s.secretRefs {
+		next.secretRefs[key] = reference
 	}
 	for value := range s.secrets {
 		next.secrets[value] = struct{}{}
 	}
 	for key, value := range values {
-		next.values[key] = value
+		next.overrides[key] = value
 	}
 	return next
 }
 
 func (s *Set) Resolve(input string) (string, error) {
 	var missing []string
+	var resolutionErr error
 	resolved := placeholder.ReplaceAllStringFunc(input, func(match string) string {
 		parts := placeholder.FindStringSubmatch(match)
-		value, ok := s.values[parts[1]]
-		if !ok {
-			missing = append(missing, parts[1])
-			return match
+		key := parts[1]
+		if value, ok := s.overrides[key]; ok {
+			return value
 		}
-		return value
+		if reference, ok := s.secretRefs[key]; ok {
+			if s.provider == nil {
+				resolutionErr = fmt.Errorf("resolve secret %q: no secret provider configured", key)
+				return match
+			}
+			value, err := s.provider.Resolve(reference)
+			if err != nil {
+				resolutionErr = fmt.Errorf("resolve secret %q: %w", key, err)
+				return match
+			}
+			s.values[key] = value
+			s.secrets[value] = struct{}{}
+			return value
+		}
+		if value, ok := s.values[key]; ok {
+			return value
+		}
+		if resolutionErr == nil {
+			missing = append(missing, parts[1])
+		}
+		return match
 	})
+	if resolutionErr != nil {
+		return "", resolutionErr
+	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
 		return "", fmt.Errorf("undefined variables: %s", strings.Join(missing, ", "))
@@ -88,6 +124,9 @@ func (s *Set) Redact(input string) string {
 func (s *Set) Values() map[string]string {
 	values := make(map[string]string, len(s.values))
 	for key, value := range s.values {
+		values[key] = value
+	}
+	for key, value := range s.overrides {
 		values[key] = value
 	}
 	return values
