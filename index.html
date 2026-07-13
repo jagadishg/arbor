@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Arbor — a terminal-native, local-first API workspace</title>
-  <meta name="description" content="Arbor brings the speed and familiarity of k9s to API development. Browse collections, switch environments, run requests, and inspect responses without leaving the terminal. Every workspace is readable YAML that belongs in Git." />
-  <meta property="og:title" content="Arbor — a terminal-native API workspace" />
-  <meta property="og:description" content="k9s-style speed for API development. Readable YAML, local-first, one engine across TUI, CLI, and CI." />
+  <title>Arbor — the API client that lives in your terminal</title>
+  <meta name="description" content="Arbor brings familiar API request and testing workflows to a keyboard-first terminal UI, with k9s-style navigation and readable YAML files that belong in Git. Run the same definitions from the TUI, CLI, or CI." />
+  <meta property="og:title" content="Arbor — the API client that lives in your terminal" />
+  <meta property="og:description" content="A Git-native API client and test runner for the terminal. Define requests, environments, and scenarios as YAML; run them from the TUI, CLI, or CI." />
   <meta property="og:type" content="website" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/asciinema-player@3.8.0/dist/bundle/asciinema-player.css" />
   <link rel="stylesheet" href="./style.css" />
@@ -25,8 +25,8 @@
   <main id="top">
     <section class="hero">
       <p class="eyebrow">terminal-native · local-first · git-friendly</p>
-      <h1>The API workspace that<br/>lives in your terminal.</h1>
-      <p class="lede">Arbor brings the speed and familiarity of <strong>k9s</strong> to API development. Browse collections, switch environments, run requests, and inspect responses — without leaving the keyboard. Every workspace is readable YAML that belongs in Git.</p>
+      <h1>The API client that<br/>lives in your terminal.</h1>
+      <p class="lede">Arbor brings familiar API request and testing workflows to a keyboard-first terminal UI, with <strong>k9s-style navigation</strong> and readable YAML files that belong in Git. Define requests, environments, and scenarios once, then run the same definitions from the TUI, CLI, or CI.</p>
       <div class="cta">
         <a class="btn primary" href="#quickstart">Get started</a>
         <a class="btn ghost" href="https://github.com/jagadishg/arbor" target="_blank" rel="noopener">Star on GitHub</a>
@@ -69,7 +69,7 @@
 
     <section id="quickstart">
       <h2>Quickstart</h2>
-      <p class="lede">Create a workspace, add a request, and run it — then open the TUI.</p>
+      <p class="lede">Create a workspace, add a request, and run it — then open the TUI or let a coding agent build the workspace from your API code.</p>
       <pre><code><span class="c"># install</span>
 brew install jagadishg/tap/arbor
 
@@ -78,10 +78,16 @@ arbor init myapi && cd myapi
 arbor new collection users -d "User endpoints"
 arbor new request users.get -m GET -u '{{base_url}}/users/1' -n "Get user"
 
+<span class="c"># definitions live in .arbor/ and are ready for Git</span>
+arbor validate
+
 <span class="c"># explore and run from the CLI</span>
 arbor list requests
 arbor describe users.get
 arbor run users.get
+
+<span class="c"># install the skill for coding agents</span>
+arbor skill install --agent all
 
 <span class="c"># or open the interactive terminal UI</span>
 arbor</code></pre>
@@ -89,7 +95,7 @@ arbor</code></pre>
   </main>
 
   <footer>
-    <p><span class="leaf">❦</span> Arbor — a terminal-native, local-first API workspace.</p>
+    <p><span class="leaf">❦</span> Arbor — the API client that lives in your terminal.</p>
     <p><a href="https://github.com/jagadishg/arbor" target="_blank" rel="noopener">github.com/jagadishg/arbor</a> · MIT licensed</p>
   </footer>
 
