@@ -105,6 +105,53 @@ func TestCommandCompletion(t *testing.T) {
 	}
 }
 
+func TestCommandInputAcceptsUppercaseLetters(t *testing.T) {
+	m := testModel()
+	m.mode = commandMode
+	for _, key := range []string{"shift+a", "shift+r", "shift+b", "c"} {
+		_, _ = m.handleKey(key)
+	}
+
+	if m.input != "ARBc" {
+		t.Fatalf("input = %q, want %q", m.input, "ARBc")
+	}
+}
+
+func TestCommandInputDeletesPreviousWord(t *testing.T) {
+	m := testModel()
+	m.mode = commandMode
+
+	for _, key := range []string{"run", "space", "users.get"} {
+		for _, r := range key {
+			if key == "space" {
+				_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
+				break
+			}
+			_, _ = m.handleKey(string(r))
+		}
+	}
+	if m.input != "run users.get" {
+		t.Fatalf("input before ctrl-w = %q, want %q", m.input, "run users.get")
+	}
+
+	_, _ = m.Update(tea.KeyPressMsg{Code: 'w', Mod: tea.ModCtrl})
+
+	if m.input != "run" {
+		t.Fatalf("input = %q, want %q", m.input, "run")
+	}
+}
+
+func TestCommandInputDeletesPreviousWordForTerminalVariants(t *testing.T) {
+	for _, key := range []string{"ctrl+shift+w", "ctrl+backspace", "ctrl+shift+backspace", "alt+backspace"} {
+		m := testModel()
+		m.mode, m.input = commandMode, "run users.get"
+		_, _ = m.handleKey(key)
+		if m.input != "run" {
+			t.Errorf("%s left input %q, want %q", key, m.input, "run")
+		}
+	}
+}
+
 func TestFilteringIsIncrementalAndEscapeRestores(t *testing.T) {
 	m := testModel()
 	_, _ = m.handleKey("/")
@@ -117,6 +164,25 @@ func TestFilteringIsIncrementalAndEscapeRestores(t *testing.T) {
 	_, _ = m.handleKey("esc")
 	if m.filter != "" || len(m.items()) != 2 {
 		t.Fatalf("filter = %q; items = %d", m.filter, len(m.items()))
+	}
+}
+
+func TestFilteringDeletesPreviousWord(t *testing.T) {
+	m := testModel()
+	_, _ = m.handleKey("/")
+	for _, key := range []string{"users", "space", "create"} {
+		if key == "space" {
+			_, _ = m.handleKey("space")
+			continue
+		}
+		for _, r := range key {
+			_, _ = m.handleKey(string(r))
+		}
+	}
+
+	_, _ = m.handleKey("ctrl+w")
+	if m.input != "users" {
+		t.Fatalf("filter input = %q, want %q", m.input, "users")
 	}
 }
 

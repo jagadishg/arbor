@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -738,9 +739,12 @@ func (m *Model) handleResponseSearchInput(key string) (tea.Model, tea.Cmd) {
 	case "ctrl+u":
 		m.input = ""
 		setQuery("")
+	case "ctrl+w", "ctrl+shift+w", "ctrl+backspace", "ctrl+shift+backspace", "alt+backspace":
+		m.input = trimWord(m.input)
+		setQuery(m.input)
 	default:
-		if isTextKey(key) {
-			m.input += key
+		if text, ok := textInputKey(key); ok {
+			m.input += text
 			setQuery(m.input)
 		}
 	}
@@ -758,9 +762,11 @@ func (m *Model) handleFilterInput(key string) (tea.Model, tea.Cmd) {
 		m.input = trimRune(m.input)
 	case "ctrl-u":
 		m.input = ""
+	case "ctrl+w", "ctrl+shift+w", "ctrl+backspace", "ctrl+shift+backspace", "alt+backspace":
+		m.input = trimWord(m.input)
 	default:
-		if isTextKey(key) {
-			m.input += key
+		if text, ok := textInputKey(key); ok {
+			m.input += text
 		}
 	}
 	if m.mode == filterMode {
@@ -786,7 +792,7 @@ func (m *Model) handleCommandInput(key string) (tea.Model, tea.Cmd) {
 		m.acceptSuggestion()
 	case "ctrl-u":
 		m.input, m.suggestion = "", 0
-	case "ctrl+w":
+	case "ctrl+w", "ctrl+shift+w", "ctrl+backspace", "ctrl+shift+backspace", "alt+backspace":
 		m.input, m.suggestion = trimWord(m.input), 0
 	case "backspace":
 		m.input, m.suggestion = trimRune(m.input), 0
@@ -795,8 +801,8 @@ func (m *Model) handleCommandInput(key string) (tea.Model, tea.Cmd) {
 		m.mode, m.input, m.suggestion = normalMode, "", 0
 		return m.executeCommand(command)
 	default:
-		if isTextKey(key) {
-			m.input += key
+		if text, ok := textInputKey(key); ok {
+			m.input += text
 			m.suggestion = 0
 		}
 	}
@@ -2855,7 +2861,28 @@ func trimWord(value string) string {
 	}
 	return strings.TrimRight(value[:index+1], " \t")
 }
-func isTextKey(key string) bool { return len([]rune(key)) == 1 }
+func textInputKey(key string) (string, bool) {
+	if key == "space" || key == "shift+space" {
+		return " ", true
+	}
+	if len([]rune(key)) == 1 {
+		return key, true
+	}
+
+	// Bubble Tea's Keystroke representation keeps Shift as a modifier, so a
+	// typed uppercase letter arrives as "shift+a" rather than "A". Convert
+	// shifted letters back to their printable form only in text inputs; the
+	// regular key handler still needs the modifier-aware form for shortcuts.
+	const shiftPrefix = "shift+"
+	if !strings.HasPrefix(key, shiftPrefix) {
+		return "", false
+	}
+	runes := []rune(strings.TrimPrefix(key, shiftPrefix))
+	if len(runes) != 1 || !unicode.IsLetter(runes[0]) {
+		return "", false
+	}
+	return string(unicode.ToUpper(runes[0])), true
+}
 func firstOr(value, fallback string) string {
 	if value == "" {
 		return fallback
