@@ -967,6 +967,14 @@ func TestSearchHighlightPreservesUnmatchedText(t *testing.T) {
 	}
 }
 
+func TestSearchHighlightHandlesUnicodeCaseFolding(t *testing.T) {
+	line := "İstanbul has an İSTANBUL office"
+	rendered := ansi.Strip(highlightSearchLine(line, "İSTANBUL", false))
+	if rendered != line {
+		t.Fatalf("search highlighting changed Unicode text: %q", rendered)
+	}
+}
+
 func TestBackingOutOfRunningRequestCancelsAndDiscardsResult(t *testing.T) {
 	ws := &model.Workspace{Name: "Demo", Root: "/tmp/demo", Requests: []model.Request{{ID: "users.get", Name: "Get", Method: "GET", URL: "https://x"}}}
 	m := NewModel(context.Background(), "/tmp/demo", "", &app.App{Workspace: ws})

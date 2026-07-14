@@ -2154,22 +2154,20 @@ func highlightSearchLine(line, query string, current bool) string {
 		foregroundColor = lipgloss.Color("#1A1B26")
 	}
 	match := lipgloss.NewStyle().Foreground(foregroundColor).Background(background).Bold(true)
-	lowerLine, lowerQuery := strings.ToLower(line), strings.ToLower(query)
+	lineRunes, queryRunes := []rune(line), []rune(query)
 	var out strings.Builder
-	for len(lowerLine) > 0 {
-		index := strings.Index(lowerLine, lowerQuery)
-		if index < 0 {
-			out.WriteString(line)
-			break
+	start := 0
+	for index := 0; index <= len(lineRunes)-len(queryRunes); {
+		if !strings.EqualFold(string(lineRunes[index:index+len(queryRunes)]), query) {
+			index++
+			continue
 		}
-		out.WriteString(line[:index])
-		end := index + len(query)
-		if end > len(line) {
-			end = len(line)
-		}
-		out.WriteString(match.Render(line[index:end]))
-		line, lowerLine = line[end:], lowerLine[end:]
+		out.WriteString(string(lineRunes[start:index]))
+		end := index + len(queryRunes)
+		out.WriteString(match.Render(string(lineRunes[index:end])))
+		start, index = end, end
 	}
+	out.WriteString(string(lineRunes[start:]))
 	return out.String()
 }
 
