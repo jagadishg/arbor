@@ -167,6 +167,17 @@ func TestCommandInputDeletesPreviousWordForTerminalVariants(t *testing.T) {
 	}
 }
 
+func TestEscapeClearsCommandInputAndExitsCommandMode(t *testing.T) {
+	m := testModel()
+	m.mode, m.input, m.suggestion = commandMode, "run users.get", 2
+
+	_, _ = m.handleKey("esc")
+
+	if m.mode != normalMode || m.input != "" || m.suggestion != 0 {
+		t.Fatalf("escape left command input active: mode=%v input=%q suggestion=%d", m.mode, m.input, m.suggestion)
+	}
+}
+
 func TestFilteringIsIncrementalAndEscapeRestores(t *testing.T) {
 	m := testModel()
 	_, _ = m.handleKey("/")
@@ -179,6 +190,22 @@ func TestFilteringIsIncrementalAndEscapeRestores(t *testing.T) {
 	_, _ = m.handleKey("esc")
 	if m.filter != "" || len(m.items()) != 2 {
 		t.Fatalf("filter = %q; items = %d", m.filter, len(m.items()))
+	}
+}
+
+func TestEscapeClearsCommittedFilterWithoutNavigating(t *testing.T) {
+	m := testModel()
+	_, _ = m.handleKey("/")
+	_, _ = m.handleKey("c")
+	_, _ = m.handleKey("enter")
+	if m.filter != "c" || m.mode != normalMode {
+		t.Fatalf("filter was not committed: filter=%q mode=%v", m.filter, m.mode)
+	}
+
+	_, _ = m.handleKey("esc")
+
+	if m.filter != "" || m.section != requestsSection || m.mode != normalMode {
+		t.Fatalf("escape navigated instead of clearing filter: filter=%q section=%s mode=%v", m.filter, m.section, m.mode)
 	}
 }
 
@@ -920,6 +947,77 @@ func TestResponseInspectorNavigationAndSearch(t *testing.T) {
 	}
 }
 
+func TestEscapeClearsResponseSearchAndExitsSearchMode(t *testing.T) {
+	m := testModel()
+	m.requestResult = &model.RequestResult{
+		Request:  m.app.Workspace.Requests[0],
+		Response: &model.Response{Status: "200 OK", StatusCode: 200, Body: []byte(`{"message":"needle"}`)},
+	}
+	m.overlay, m.focusedPane = responseOverlay, paneResponse
+	m.mode, m.input, m.responseSearch, m.responseMatch = responseSearchMode, "need", "need", 0
+
+	_, _ = m.handleKey("esc")
+
+	if m.mode != normalMode || m.input != "" || m.responseSearch != "" || m.responseMatch != -1 {
+		t.Fatalf("escape left response search active: mode=%v input=%q search=%q match=%d", m.mode, m.input, m.responseSearch, m.responseMatch)
+	}
+}
+
+func TestEscapeClearsCommittedResponseSearchWithoutClosingPane(t *testing.T) {
+	m := testModel()
+	m.requestResult = &model.RequestResult{
+		Request:  m.app.Workspace.Requests[0],
+		Response: &model.Response{Status: "200 OK", StatusCode: 200, Body: []byte(`{"message":"needle"}`)},
+	}
+	m.overlay, m.focusedPane = responseOverlay, paneResponse
+	m.mode, m.input = responseSearchMode, "need"
+	_, _ = m.handleKey("enter")
+	if m.responseSearch != "need" || m.mode != normalMode {
+		t.Fatalf("search was not committed: search=%q mode=%v", m.responseSearch, m.mode)
+	}
+
+	_, _ = m.handleKey("esc")
+
+	if m.overlay != responseOverlay || m.responseSearch != "" || m.responseMatch != -1 {
+		t.Fatalf("escape closed or retained response search: overlay=%v search=%q match=%d", m.overlay, m.responseSearch, m.responseMatch)
+	}
+}
+
+func TestRequestPaneSupportsSearchAndMatchNavigation(t *testing.T) {
+	m := testModel()
+	m.width, m.height = 100, 24
+	m.requestResult = &model.RequestResult{
+		Request:  m.app.Workspace.Requests[0],
+		Response: &model.Response{Status: "200 OK", StatusCode: 200, Body: []byte(`{}`)},
+	}
+	m.overlay, m.focusedPane = responseOverlay, paneRequest
+
+	_, _ = m.handleKey("/")
+	for _, key := range []string{"h", "t", "t", "p"} {
+		_, _ = m.handleKey(key)
+	}
+	_, _ = m.handleKey("enter")
+
+	if m.requestSearch != "http" || m.mode != normalMode {
+		t.Fatalf("request search was not committed: search=%q mode=%v", m.requestSearch, m.mode)
+	}
+	if len(m.requestSearchMatches(m.currentSplitLayout().requestWidth)) == 0 {
+		t.Fatal("request search found no matches")
+	}
+	if !strings.Contains(ansi.Strip(m.renderSplit(100, 16)), "/http") {
+		t.Fatal("committed request search was not shown in the request pane title")
+	}
+
+	_, _ = m.handleKey("n")
+	if !strings.Contains(m.message, "Match") {
+		t.Fatalf("n did not report the request match: %q", m.message)
+	}
+	_, _ = m.handleKey("esc")
+	if m.overlay != responseOverlay || m.requestSearch != "" {
+		t.Fatalf("escape closed or retained request search: overlay=%v search=%q", m.overlay, m.requestSearch)
+	}
+}
+
 func TestCommandBarOpensFromSplitView(t *testing.T) {
 	m := testModel()
 	m.width, m.height = 100, 24
@@ -957,6 +1055,23 @@ func TestReadonlyOverlayUsesSearchViewer(t *testing.T) {
 	}
 	if matches := m.overlaySearchMatches(); len(matches) == 0 {
 		t.Fatal("readonly overlay search did not find help content")
+	}
+}
+
+func TestEscapeClearsCommittedOverlaySearchWithoutClosingOverlay(t *testing.T) {
+	m := testModel()
+	m.overlay = helpOverlay
+	_, _ = m.handleKey("/")
+	_, _ = m.handleKey("n")
+	_, _ = m.handleKey("enter")
+	if m.overlaySearch != "n" || m.mode != normalMode {
+		t.Fatalf("overlay search was not committed: search=%q mode=%v", m.overlaySearch, m.mode)
+	}
+
+	_, _ = m.handleKey("esc")
+
+	if m.overlay != helpOverlay || m.overlaySearch != "" || m.overlayMatch != -1 {
+		t.Fatalf("escape closed or retained overlay search: overlay=%v search=%q match=%d", m.overlay, m.overlaySearch, m.overlayMatch)
 	}
 }
 

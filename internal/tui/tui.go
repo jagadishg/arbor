@@ -174,6 +174,8 @@ type Model struct {
 	requestResult         *model.RequestResult
 	requestShowDefinition bool
 	revealSecrets         bool
+	requestSearch         string
+	requestMatch          int
 	responseSearch        string
 	responseMatch         int
 	overlaySearch         string
@@ -404,7 +406,13 @@ func (m *Model) handleKey(key string) (tea.Model, tea.Cmd) {
 		m.overlay, m.overlayOffset = helpOverlay, 0
 	case "ctrl+a":
 		m.overlay, m.overlayOffset = aliasOverlay, 0
-	case "q", "esc", "h", "left", "[":
+	case "esc":
+		if m.filter != "" {
+			m.filter, m.selected = "", 0
+		} else {
+			m.goBack()
+		}
+	case "q", "h", "left", "[":
 		m.goBack()
 	case "]", "right":
 		m.goForward()
@@ -451,7 +459,21 @@ func (m *Model) handleSplitKey(key string) (tea.Model, tea.Cmd) {
 		lines = m.requestPaneLines(layout.requestWidth)
 	}
 	switch key {
-	case "q", "esc":
+	case "esc":
+		if m.focusedPane == paneRequest && m.requestSearch != "" {
+			m.requestSearch, m.requestMatch = "", -1
+			return m, nil
+		}
+		if m.focusedPane == paneResponse && m.responseSearch != "" {
+			m.responseSearch, m.responseMatch = "", -1
+			return m, nil
+		}
+		if m.running {
+			m.cancelRunningRequest(true)
+		} else {
+			m.overlay = noOverlay
+		}
+	case "q":
 		if m.running {
 			m.cancelRunningRequest(true)
 		} else {
@@ -496,16 +518,24 @@ func (m *Model) handleSplitKey(key string) (tea.Model, tea.Cmd) {
 	case "L":
 		*offset = max(0, len(lines)-layout.available)
 	case "/":
-		if m.focusedPane == paneResponse {
+		if m.focusedPane == paneRequest || m.focusedPane == paneResponse {
 			m.mode, m.input = responseSearchMode, ""
-			m.responseSearch, m.responseMatch = "", -1
+			if m.focusedPane == paneRequest {
+				m.requestSearch, m.requestMatch = "", -1
+			} else {
+				m.responseSearch, m.responseMatch = "", -1
+			}
 		}
 	case "n":
-		if m.focusedPane == paneResponse {
+		if m.focusedPane == paneRequest {
+			m.jumpToRequestMatch(true)
+		} else if m.focusedPane == paneResponse {
 			m.jumpToResponseMatch(true)
 		}
 	case "N", "shift+n":
-		if m.focusedPane == paneResponse {
+		if m.focusedPane == paneRequest {
+			m.jumpToRequestMatch(false)
+		} else if m.focusedPane == paneResponse {
 			m.jumpToResponseMatch(false)
 		}
 	case "e":
@@ -653,6 +683,10 @@ func (m *Model) handleOverlayKey(key string) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if key == "esc" && m.overlaySearch != "" {
+		m.overlaySearch, m.overlayMatch = "", -1
+		return m, nil
+	}
 	switch key {
 	case "q", "esc", "d", "y", "l", "?", "ctrl+a":
 		m.overlay, m.overlayOffset = noOverlay, 0
@@ -720,9 +754,13 @@ func (m *Model) handleInput(key string) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleResponseSearchInput(key string) (tea.Model, tea.Cmd) {
-	isResponse := m.inSplitView()
+	isSplit := m.inSplitView()
+	isRequest := isSplit && m.focusedPane == paneRequest
+	isResponse := isSplit && m.focusedPane == paneResponse
 	setQuery := func(value string) {
-		if isResponse {
+		if isRequest {
+			m.requestSearch, m.requestMatch = value, -1
+		} else if isResponse {
 			m.responseSearch, m.responseMatch = value, -1
 		} else {
 			m.overlaySearch, m.overlayMatch = value, -1
@@ -730,12 +768,15 @@ func (m *Model) handleResponseSearchInput(key string) (tea.Model, tea.Cmd) {
 	}
 	switch key {
 	case "esc":
+		setQuery("")
 		m.mode, m.input = normalMode, ""
 	case "enter":
 		setQuery(strings.TrimSpace(m.input))
 		m.mode, m.input, m.responseMatch = normalMode, "", -1
 		if isResponse && m.responseSearch != "" {
 			m.jumpToResponseMatch(true)
+		} else if isRequest && m.requestSearch != "" {
+			m.jumpToRequestMatch(true)
 		} else if !isResponse && m.overlaySearch != "" {
 			m.jumpToOverlayMatch(true)
 		}
@@ -1831,14 +1872,25 @@ func (m *Model) renderSplit(width, height int) string {
 	m.requestOffset = clampOffset(m.requestOffset, len(reqLines), layout.available)
 	m.responseOffset = clampOffset(m.responseOffset, len(respLines), layout.available)
 
-	left := m.renderPaneOffset(m.requestPaneTitle(), reqLines, layout.leftOuter, layout.height, m.requestOffset, m.requestHorizontal, m.focusedPane == paneRequest, m.requestPaneFooter())
+	requestFooter := m.requestPaneFooter()
+	if m.requestSearch != "" {
+		matches := m.requestSearchMatches(layout.requestWidth)
+		requestFooter += fmt.Sprintf("  /%s (%d)", m.requestSearch, len(matches))
+	}
+	requestTitle := m.requestPaneTitle()
+	if m.mode == responseSearchMode && m.focusedPane == paneRequest {
+		requestTitle = "/ " + m.input + "▊"
+	} else if m.requestSearch != "" {
+		requestTitle += " /" + m.requestSearch
+	}
+	left := m.renderPaneOffset(requestTitle, reqLines, layout.leftOuter, layout.height, m.requestOffset, m.requestHorizontal, m.focusedPane == paneRequest, requestFooter)
 	responseFooter := "[j/k] scroll  [←/→] pan  " + wrapHint(m.responseWrap) + "  [/] search  [c] copy  [q] close"
 	if m.responseSearch != "" {
 		matches := m.responseSearchMatches(layout.responseWidth)
 		responseFooter += fmt.Sprintf("  /%s (%d)", m.responseSearch, len(matches))
 	}
 	responseTitle := "Response"
-	if m.mode == responseSearchMode {
+	if m.mode == responseSearchMode && m.focusedPane == paneResponse {
 		responseTitle = "/ " + m.input + "▊"
 	} else if m.responseSearch != "" {
 		responseTitle = "Response /" + m.responseSearch
@@ -1962,6 +2014,25 @@ func maxHorizontalOffset(lines []string, width int) int {
 }
 
 func (m *Model) requestPaneLines(inner int) []string {
+	lines := m.requestPaneLinesBase(inner)
+	if m.requestSearch == "" {
+		return lines
+	}
+	matches := m.requestSearchMatches(inner)
+	current := -1
+	if m.requestMatch >= 0 && m.requestMatch < len(matches) {
+		current = matches[m.requestMatch]
+	}
+	for index, line := range lines {
+		plain := ansi.Strip(line)
+		if strings.Contains(strings.ToLower(plain), strings.ToLower(m.requestSearch)) {
+			lines[index] = highlightSearchLine(plain, m.requestSearch, index == current)
+		}
+	}
+	return lines
+}
+
+func (m *Model) requestPaneLinesBase(inner int) []string {
 	sent := m.requestResult.Sent
 	if m.requestShowDefinition || sent == nil {
 		return m.requestDefinitionLines(inner)
@@ -2142,6 +2213,20 @@ func (m *Model) responseSearchMatches(inner int) []int {
 	return matches
 }
 
+func (m *Model) requestSearchMatches(inner int) []int {
+	if m.requestSearch == "" {
+		return nil
+	}
+	query := strings.ToLower(m.requestSearch)
+	matches := make([]int, 0)
+	for index, line := range m.requestPaneLinesBase(inner) {
+		if strings.Contains(strings.ToLower(ansi.Strip(line)), query) {
+			matches = append(matches, index)
+		}
+	}
+	return matches
+}
+
 func highlightSearchLine(line, query string, current bool) string {
 	query = strings.TrimSpace(query)
 	if query == "" {
@@ -2188,6 +2273,26 @@ func (m *Model) jumpToResponseMatch(next bool) {
 	document := m.responseDocumentLines(layout.responseWidth)
 	m.responseOffset = clampOffset(matches[m.responseMatch]-layout.available/2, len(document), layout.available)
 	m.message = fmt.Sprintf("Match %d/%d for /%s", m.responseMatch+1, len(matches), m.responseSearch)
+}
+
+func (m *Model) jumpToRequestMatch(next bool) {
+	inner := m.currentSplitLayout().requestWidth
+	matches := m.requestSearchMatches(inner)
+	if len(matches) == 0 {
+		m.message = "No request matches for /" + m.requestSearch
+		return
+	}
+	if m.requestMatch < 0 || m.requestMatch >= len(matches) {
+		m.requestMatch = 0
+	} else if next {
+		m.requestMatch = (m.requestMatch + 1) % len(matches)
+	} else {
+		m.requestMatch = (m.requestMatch - 1 + len(matches)) % len(matches)
+	}
+	layout := m.currentSplitLayout()
+	document := m.requestPaneLinesBase(layout.requestWidth)
+	m.requestOffset = clampOffset(matches[m.requestMatch]-layout.available/2, len(document), layout.available)
+	m.message = fmt.Sprintf("Match %d/%d for /%s", m.requestMatch+1, len(matches), m.requestSearch)
 }
 
 func statusStyle(code int) lipgloss.Style {
